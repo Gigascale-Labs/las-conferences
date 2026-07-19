@@ -43,12 +43,15 @@ jobs:
         run: |
           git config user.name "las-venue-tracker[bot]"
           git config user.email "actions@github.com"
-          if git diff --quiet -- data; then
+          # `git add` first: plain `git diff` is blind to brand-new untracked
+          # files (e.g. data/seen.json / data/venues.csv on the very first run),
+          # so checking the *staged* diff is what actually detects "changed".
+          git add data
+          if git diff --cached --quiet -- data; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
-            new_rows=$(git diff --numstat -- data/venues.csv | awk '{print $1}')
-            page_changes=$(git diff --name-only -- data/snapshots | wc -l | tr -d ' ')
-            git add data
+            new_rows=$(git diff --cached --numstat -- data/venues.csv | awk '{print $1}')
+            page_changes=$(git diff --cached --name-only -- data/snapshots | wc -l | tr -d ' ')
             git commit -m "track: ${new_rows:-0} new items, ${page_changes} page changes — $(date -u +%Y-%m-%d)"
             git push
             echo "changed=true" >> "$GITHUB_OUTPUT"
