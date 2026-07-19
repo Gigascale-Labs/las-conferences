@@ -1,0 +1,197 @@
+# All tracker sources, tiers, URLs, and enabled flags.
+#
+# `meta.repo_url` / `meta.maintainer_email` build the UA string required by ground
+# rule 3 (`las-venue-tracker/1.0 (+<repo-url>; mailto:<maintainer-email>)`).
+# Update repo_url once this repo has a real GitHub remote.
+meta:
+  repo_url: "https://github.com/stephen-elliott/las-venue-tracker"
+  maintainer_email: "stephen.elliott231@gmail.com"
+
+sources:
+  # ---------------------------------------------------------------------------
+  # Tier A: native RSS/Atom feeds
+  # ---------------------------------------------------------------------------
+  - id: wikicfp-all
+    tier: A
+    name: "WikiCFP global feed"
+    url: "http://www.wikicfp.com/cfp/rss"
+    enabled: true
+    notes: >
+      Confirmed live 2026-07-19. High volume, unfiltered — relies entirely on
+      keyword filtering (config/keywords.yaml).
+
+  - id: wikicfp-mas
+    tier: A
+    name: "WikiCFP category: multiagent systems"
+    url: "http://www.wikicfp.com/cfp/rss?cat=multiagent%20systems"
+    enabled: true
+    notes: >
+      VERIFIED live 2026-07-19 (curl, HTTP 200, well-formed RSS 2.0). Confirmed the
+      `?cat=<name>` pattern; the category page at
+      wikicfp.com/cfp/call?conference=multiagent%20systems corresponds 1:1 with
+      this feed URL.
+
+  - id: wikicfp-dt
+    tier: A
+    name: "WikiCFP category: digital twin"
+    url: "http://www.wikicfp.com/cfp/rss?cat=digital%20twin"
+    enabled: true
+    notes: >
+      VERIFIED live 2026-07-19 (curl, HTTP 200, well-formed RSS 2.0). WikiCFP also
+      separately tags "digital twins" (plural) as its own category; not added as a
+      second source in v1 to avoid duplicate near-identical items — wikicfp-all
+      plus keyword filtering already catches anything this would add.
+
+  - id: arxiv-csma
+    tier: A
+    name: "arXiv cs.MA (Multiagent Systems)"
+    url: "https://rss.arxiv.org/rss/cs.MA"
+    enabled: true
+    notes: "Early-warning signal for CFPs and new benchmarks."
+
+  - id: arxiv-cscy
+    tier: A
+    name: "arXiv cs.CY (Computers & Society)"
+    url: "https://rss.arxiv.org/rss/cs.CY"
+    enabled: true
+    notes: "Broad category — keyword-filter hard."
+
+  - id: arxiv-econ
+    tier: A
+    name: "arXiv econ.GN"
+    url: "https://rss.arxiv.org/rss/econ.GN"
+    enabled: true
+    notes: "ACE / computational-economics signal."
+
+  - id: gh-agent-papers
+    tier: A
+    name: "Awesome-Agent-Papers commits"
+    url: "https://github.com/luo-junyu/Awesome-Agent-Papers/commits/main.atom"
+    enabled: true
+    notes: "VERIFIED default branch is `main` (2026-07-19)."
+
+  - id: gh-eval-tools
+    tier: A
+    format: csv
+    csv_id_field: full_name
+    name: "Awesome-AI-Evaluations-Tools weekly index"
+    url: "https://raw.githubusercontent.com/danielrosehill/Awesome-AI-Evaluations-Tools/refs/heads/master/data/repos.csv"
+    enabled: true
+    notes: >
+      VERIFIED live 2026-07-19: CSV columns are
+      category,name,full_name,url,stars,last_commit,language,license,archived,description.
+      This repo's README states the CSV is regenerated weekly by GitHub Actions
+      (confirmed by a github-actions[bot] commit dated 2026-07-13); fetched
+      directly rather than polling the commits feed, per spec preference for a
+      machine-readable index over commit noise. Secondary candidate
+      benchflow-ai/awesome-evals (branch main, hand-curated, no CSV) was not
+      added in v1 to avoid duplicate coverage — revisit if gh-eval-tools goes
+      stale.
+
+  # ---------------------------------------------------------------------------
+  # Tier B: structured API (OpenReview)
+  # ---------------------------------------------------------------------------
+  - id: openreview-venues
+    tier: B
+    name: "OpenReview new venue groups"
+    enabled: true
+    parents: ["NeurIPS.cc", "ICML.cc", "ICLR.cc", "AAAI.org"]
+    years: ["2026", "2027"]
+    notes: >
+      VERIFIED 2026-07-19 against the live v2 API (api2.openreview.net) with an
+      unauthenticated guest client: `GET /groups?id=active_venues` returns a flat
+      member list of venue group IDs (e.g. "ICML.cc/2026/Conference") with no auth
+      required. See src/tracker/tier_b_openreview.py for the exact call.
+
+  # ---------------------------------------------------------------------------
+  # Tier C: page snapshot + diff (last resort — no feed or API exists)
+  # ---------------------------------------------------------------------------
+  - id: ifaamas
+    tier: C
+    name: "IFAAMAS"
+    url: "https://ifaamas.org/"
+    enabled: true
+    notes: >
+      VERIFIED 2026-07-19: no dedicated news/announcements page exists on
+      ifaamas.org (news.html 404s); homepage is static HTML and links out to the
+      current AAMAS year site plus board/election notices, so it is watched
+      directly. Real workshop content lives on the aamas-ws source instead.
+
+  - id: iscss
+    tier: C
+    name: "IC2S2 (International Conference on Computational Social Science)"
+    url: "https://2026.ic2s2.net"
+    enabled: true
+    notes: >
+      VERIFIED 2026-07-19: static HTML, live CFP text present. Domain rotates
+      yearly (20XX.ic2s2.net) — update this URL each cycle; iscss.org itself is
+      just a portal of past/current links, not useful to watch directly.
+
+  - id: essa
+    tier: C
+    name: "ESSA (European Social Simulation Association)"
+    url: "https://essa.eu.org/events/"
+    enabled: true
+    notes: >
+      VERIFIED live 2026-07-19 (curl, HTTP 200, static HTML). The page includes an
+      unrelated "recent posts" style widget (observed content: an unrelated Scout
+      Laws article) alongside the real events content, with no distinguishing
+      class/id/semantic tag found on a quick pass to scope a `selector:` around
+      just the events list. This widget will likely churn independently of real
+      CFP content and produce Tier C diff noise; left unscoped deliberately since
+      spec section 8's own diff-noise maintenance-issue mechanism (>3 consecutive
+      non-empty diffs) is the intended way to catch and fix this — add a
+      `selector:` here if/when that issue fires.
+
+  - id: sce
+    tier: C
+    name: "Society for Computational Economics (CEF conference)"
+    url: "https://comp-econ.com/sce-conferences/"
+    enabled: true
+    notes: >
+      VERIFIED 2026-07-19: comp-econ.com is the correct current domain (the spec's
+      guess was right). Using the stable /sce-conferences/ hub rather than a
+      year-specific slug (e.g. /32nd-cef-conference/), which changes annually.
+
+  - id: eshia
+    tier: C
+    name: "ESHIA / WEHIA"
+    url: "https://www.eshia.org/conferences/"
+    enabled: true
+    notes: >
+      VERIFIED live 2026-07-19 (curl, HTTP 200, static HTML, real WEHIA 2026
+      Ancona content present). Society-level page chosen deliberately over the
+      yearly WEHIA site (currently eshia.org/wehia26/), since that slug/domain
+      rotates each year.
+
+  - id: csssa
+    tier: C
+    name: "CSSSA (Computational Social Science Society of the Americas)"
+    url: "https://computationalsocialscience.org/conferences/"
+    enabled: true
+    notes: "VERIFIED live 2026-07-19: static HTML, current CSS 2026 (Santa Fe) content with deadlines."
+
+  - id: dtc
+    tier: C
+    name: "Digital Twin Consortium events"
+    url: "https://www.digitaltwinconsortium.org/events/"
+    enabled: false
+    notes: >
+      DISABLED per spec non-goals (no headless-browser/bot-bypass work in v1).
+      VERIFIED 2026-07-19: robots.txt allows all, but the page itself returns
+      HTTP 403 to every request tried (default curl UA, browser UA, and our
+      declared tracker UA alike) — consistent with WAF/bot-protection blocking
+      the request rather than a robots.txt disallow. No public events RSS/iCal
+      feed was found either. Left in config disabled rather than removed so it's
+      easy to re-enable if DTC's protection changes.
+
+  - id: aamas-ws
+    tier: C
+    name: "AAMAS 2026 workshops page"
+    url: "https://cyprusconferences.org/aamas2026/workshops/"
+    enabled: true
+    notes: >
+      VERIFIED live 2026-07-19: static HTML, full listing of 17 workshops with
+      dates/descriptions. Domain/slug changes yearly (host institution rotates)
+      — update this URL each AAMAS cycle; watching IFAAMAS instead is NOT a
+      sufficient substitute since ifaamas.org carries no workshop content itself.

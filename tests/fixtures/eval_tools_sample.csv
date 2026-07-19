@@ -1,0 +1,4 @@
+category,name,full_name,url,stars,last_commit,language,license,archived,description
+Agentic & Tool Use Evals,Gorilla,ShishirPatil/gorilla,https://github.com/ShishirPatil/gorilla,12942,2026-04-13,Python,Apache-2.0,False,Training and evaluating LLMs for function calls (tool calls).
+Agentic & Tool Use Evals,AgentBench,THUDM/AgentBench,https://github.com/THUDM/AgentBench,3563,2026-06-01,Python,Apache-2.0,False,A benchmark for evaluating LLMs as agents across diverse environments.
+Text Generation Evals,ROUGE-eval,someuser/rouge-eval,https://github.com/someuser/rouge-eval,120,2026-01-01,Python,MIT,False,Simple ROUGE score computation for summarization.

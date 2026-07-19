@@ -1,0 +1,55 @@
+name: Track venues and CFPs
+
+on:
+  schedule:
+    # Monday 20:00 UTC ≈ Tuesday morning AEST. GitHub Actions cron is UTC only.
+    - cron: "0 20 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: las-venue-tracker
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -e .
+
+      - name: Run tracker
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python -m tracker.main
+
+      - name: Commit data changes
+        id: commit
+        run: |
+          git config user.name "las-venue-tracker[bot]"
+          git config user.email "actions@github.com"
+          if git diff --quiet -- data; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            new_rows=$(git diff --numstat -- data/venues.csv | awk '{print $1}')
+            page_changes=$(git diff --name-only -- data/snapshots | wc -l | tr -d ' ')
+            git add data
+            git commit -m "track: ${new_rows:-0} new items, ${page_changes} page changes — $(date -u +%Y-%m-%d)"
+            git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi

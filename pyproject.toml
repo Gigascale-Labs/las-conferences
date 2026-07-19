@@ -1,0 +1,30 @@
+[project]
+name = "las-venue-tracker"
+version = "0.1.0"
+description = "Weekly tracker for workshops, conferences, and CFPs relevant to LAS research"
+requires-python = ">=3.11"
+dependencies = [
+    "feedparser==6.0.11",
+    "requests==2.32.3",
+    "pyyaml==6.0.2",
+    "beautifulsoup4==4.12.3",
+    "openreview-py==2.3.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore:.*temporary mapping.*from `updated` to `published`.*:DeprecationWarning",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

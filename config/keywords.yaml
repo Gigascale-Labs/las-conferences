@@ -1,0 +1,54 @@
+# Topic filter terms for the LAS venue/CFP tracker.
+# An item is "relevant" if any term from any topic group matches (case-insensitive
+# substring on title + summary/description). An item is "high priority" if it also
+# matches a term in the `meta` group. Substring matching is deliberate: it catches
+# plurals and spelling variants (e.g. "societ" catches "society"/"societies",
+# "behavio" catches "behavior"/"behaviour") without maintaining an exhaustive list.
+#
+# Tune this file to change what the tracker surfaces — no keywords are hardcoded
+# in the Python source.
+
+multi_agent:
+  - multi-agent
+  - multiagent
+  - agent-based
+  - MAS
+  - cooperative AI
+  - mechanism design
+  - agent societ
+  - swarm
+
+digital_twin:
+  - digital twin
+  - parallel intelligence
+  - social simulation
+
+comp_econ:
+  - computational economic
+  - agent-based computational
+  - ACE
+  - heterogeneous agent
+  - market simulation
+  - algorithmic collusion
+
+css:
+  - computational social
+  - social simulation
+  - opinion dynamic
+  - collective behavio
+
+llm_evals:
+  - LLM agent
+  - agent benchmark
+  - agentic
+  - agent eval
+  - multi-agent eval
+  - agent safety
+
+meta:
+  - workshop
+  - call for papers
+  - CFP
+  - fellowship
+  - hackathon
+  - deadline
