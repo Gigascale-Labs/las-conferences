@@ -10,7 +10,11 @@ from tracker.verify import VerificationResult
 SCOPE = {
     "meta": {"repo_url": "https://example.org/repo", "maintainer_email": "test@example.org"},
     "model": {"id": "test/model", "max_output_tokens": 1000},
-    "search": {"max_results_per_query": 5, "queries": ["query one", "query two"]},
+    "search": {
+        "max_results_per_query": 5,
+        "max_candidates_per_query": 8,
+        "queries": ["query one", "query two"],
+    },
     "relevance": {"description": "test relevance"},
     "reputability": {"criteria": "test reputability"},
 }

@@ -15,10 +15,18 @@ model:
   # re-pricing the whole pipeline. Re-check OpenRouter's pricing if it's been
   # a while; it changes over time.
   id: "anthropic/claude-sonnet-5"
-  max_output_tokens: 4000
+  # 4000 was the original guess and was observed 2026-08-26 to truncate
+  # mid-JSON on a broad query with many real matches (finish_reason: length).
+  # 8000 is a bigger margin, not a measured sufficient value — watch for the
+  # same truncation error if a query's result set grows further.
+  max_output_tokens: 8000
 
 search:
   max_results_per_query: 8
+  # Caps candidates per query in the prompt itself, independent of
+  # max_output_tokens — bounds output size directly instead of hoping the
+  # token budget is big enough.
+  max_candidates_per_query: 8
   queries:
     - "call for papers workshop large-scale multi-agent systems 2026 2027"
     - "conference AI safety multi-agent systems governance systemic risk"

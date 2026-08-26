@@ -58,17 +58,18 @@ class Candidate:
     reputability_rationale: str
 
 
-def _prompt(query: str, relevance: str, reputability: str) -> str:
+def _prompt(query: str, relevance: str, reputability: str, max_candidates: int) -> str:
     return (
         f"Search query: {query}\n\n"
         f"Relevance bar (an event must connect to this):\n{relevance}\n\n"
         f"Reputability bar:\n{reputability}\n\n"
-        "From the web search results for this query, list every distinct "
-        "workshop, conference, or open CFP that meets BOTH bars above. Skip "
-        "anything whose CFP/registration has already closed with no future "
-        "edition mentioned in the results. If nothing in the results "
-        "qualifies, return an empty candidates list rather than including a "
-        "borderline or invented item."
+        f"From the web search results for this query, list up to {max_candidates} "
+        "distinct workshops, conferences, or open CFPs that meet BOTH bars above "
+        "— the most relevant and reputable ones first if more than "
+        f"{max_candidates} qualify. Skip anything whose CFP/registration has "
+        "already closed with no future edition mentioned in the results. If "
+        "nothing in the results qualifies, return an empty candidates list "
+        "rather than including a borderline or invented item."
     )
 
 
@@ -81,6 +82,7 @@ def run_query(
     reputability: str,
     max_results: int,
     max_output_tokens: int,
+    max_candidates: int,
 ) -> list[Candidate]:
     body = {
         "model": model,
@@ -90,7 +92,7 @@ def run_query(
             "type": "json_schema",
             "json_schema": {"name": "candidates", "strict": True, "schema": CANDIDATE_SCHEMA},
         },
-        "messages": [{"role": "user", "content": _prompt(query, relevance, reputability)}],
+        "messages": [{"role": "user", "content": _prompt(query, relevance, reputability, max_candidates)}],
     }
     try:
         resp = requests.post(
@@ -101,8 +103,18 @@ def run_query(
         )
         resp.raise_for_status()
         payload = resp.json()
-        content = payload["choices"][0]["message"]["content"]
-        parsed = json.loads(content)
+        choice = payload["choices"][0]
+        content = choice["message"]["content"]
+        if content is None:
+            raise ValueError(f"empty message content, finish_reason={choice.get('finish_reason')!r}")
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"{exc} (finish_reason={choice.get('finish_reason')!r}, "
+                f"content_length={len(content)}, max_output_tokens={max_output_tokens} — "
+                "likely truncated by the output token cap if finish_reason is 'length'"
+            ) from exc
     except Exception as exc:  # noqa: BLE001 - one bad query must never fail the run, see main.py
         raise DiscoveryError(f"query {query!r}: {exc}") from exc
 

@@ -66,6 +66,7 @@ def run(repo: str | None = None, dry_run: bool = False) -> None:
                 reputability=reputability,
                 max_results=search_cfg["max_results_per_query"],
                 max_output_tokens=model_cfg["max_output_tokens"],
+                max_candidates=search_cfg["max_candidates_per_query"],
             )
         except DiscoveryError as exc:
             summary.query_failed(query, str(exc))

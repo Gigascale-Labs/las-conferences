@@ -12,6 +12,7 @@ CANDIDATE_KWARGS = dict(
     reputability="named organizer, live CFP",
     max_results=5,
     max_output_tokens=1000,
+    max_candidates=8,
 )
 
 
@@ -64,3 +65,26 @@ def test_malformed_json_content_raises_discovery_error():
     with patch("tracker.discover.requests.post", return_value=resp):
         with pytest.raises(DiscoveryError):
             run_query("malformed query", **CANDIDATE_KWARGS)
+
+
+def test_truncated_json_error_names_finish_reason():
+    resp = Mock()
+    resp.raise_for_status = Mock()
+    truncated = '{"candidates": [{"name": "Some Workshop", "url": "https://ex'
+    resp.json.return_value = {
+        "choices": [{"message": {"content": truncated}, "finish_reason": "length"}]
+    }
+    with patch("tracker.discover.requests.post", return_value=resp):
+        with pytest.raises(DiscoveryError, match="length"):
+            run_query("truncated query", **CANDIDATE_KWARGS)
+
+
+def test_none_content_raises_discovery_error_naming_finish_reason():
+    resp = Mock()
+    resp.raise_for_status = Mock()
+    resp.json.return_value = {
+        "choices": [{"message": {"content": None}, "finish_reason": "content_filter"}]
+    }
+    with patch("tracker.discover.requests.post", return_value=resp):
+        with pytest.raises(DiscoveryError, match="content_filter"):
+            run_query("refused query", **CANDIDATE_KWARGS)
