@@ -56,9 +56,11 @@ def run(repo: str | None = None, dry_run: bool = False) -> None:
     queries = search_cfg["queries"]
     all_candidates: list[discover.Candidate] = []
     failures: list[str] = []
+    total_cost_usd = 0.0
+    cost_known_for_all_queries = True
     for query in queries:
         try:
-            candidates = discover.run_query(
+            result = discover.run_query(
                 query,
                 api_key=api_key,
                 model=model_cfg["id"],
@@ -72,8 +74,16 @@ def run(repo: str | None = None, dry_run: bool = False) -> None:
             summary.query_failed(query, str(exc))
             failures.append(str(exc))
             continue
-        summary.query_ok(query, len(candidates))
-        all_candidates.extend(candidates)
+        summary.query_ok(query, len(result.candidates), result.cost_usd)
+        all_candidates.extend(result.candidates)
+        if result.cost_usd is None:
+            cost_known_for_all_queries = False
+        else:
+            total_cost_usd += result.cost_usd
+
+    if total_cost_usd or not cost_known_for_all_queries:
+        suffix = "" if cost_known_for_all_queries else " (incomplete — some queries didn't report cost)"
+        summary.lines.append(f"- total reported cost this run: ${total_cost_usd:.4f}{suffix}")
 
     # One bad query is tolerated (ground rule: a single flaky query must never
     # fail the whole run) but every query failing is a systemic problem (e.g.

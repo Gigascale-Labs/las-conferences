@@ -112,12 +112,27 @@ written to `$GITHUB_STEP_SUMMARY`.
 ## 8. Cost and secrets
 
 Needs one repo secret: `OPENROUTER_API_KEY`. No other paid service. `model.id`
-and `search.queries` are both in `config/scope.yaml`; see the pricing note
-there for why the model choice barely moves cost at weekly cadence (the flat
-per-search fee dominates the token cost of every model tested — see the
-conversation that produced this spec for the numbers, dated 2026-08-26; re-verify
-before trusting them if it's been a while — model and web-search pricing on
-OpenRouter both change over time).
+and `search.queries` are both in `config/scope.yaml`.
+
+The original pricing estimate (2026-08-26, before this pipeline had ever run
+for real) assumed OpenRouter's `web` plugin behaves as documented: one flat,
+non-agentic Exa search per call, ~$0.007-0.02 regardless of model. That
+assumption was wrong in a way that mattered: left with `engine` unset, the
+plugin silently substitutes each provider's *native* search tool when the
+model has one (true for Anthropic, OpenAI, Google, Perplexity, xAI) — and
+Anthropic's native tool is agentic, letting the model invoke it repeatedly
+within one turn. Measured: 2 real queries against `anthropic/claude-sonnet-5`
+with `engine` unset cost a combined ~$2 (2026-08-26) — no per-call cost
+breakdown was captured at the time, so the exact split isn't known, but it is
+10-100x the ~$0.02-0.20 the original estimate assumed for that many queries.
+Fix: `discover.py` now pins `plugins: [{"id": "web", "engine": "exa", ...}]`
+explicitly (`WEB_PLUGIN_ENGINE`), restoring one bounded, non-agentic search
+per query at Exa's flat ~$0.007 (auto mode, up to 10 results) regardless of
+which model is configured — this is what makes the model choice barely
+matter, not the unpinned default. `discover.run_query` also now returns
+`usage.cost`/`prompt_tokens`/`completion_tokens` from OpenRouter's response,
+logged per-query and summed per-run in the run summary, so actual spend is
+observed on every run going forward rather than assumed.
 
 ## 9. Non-goals / known gaps
 

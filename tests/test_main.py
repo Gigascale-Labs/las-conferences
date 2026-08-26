@@ -4,7 +4,7 @@ import pytest
 import yaml
 
 from tracker import main
-from tracker.discover import Candidate, DiscoveryError
+from tracker.discover import Candidate, DiscoveryError, QueryResult
 from tracker.verify import VerificationResult
 
 SCOPE = {
@@ -36,6 +36,10 @@ def _candidate(name="Test Workshop", url="https://example.org/event") -> Candida
     )
 
 
+def _query_result(candidates: list[Candidate]) -> QueryResult:
+    return QueryResult(candidates=candidates, prompt_tokens=100, completion_tokens=20, cost_usd=0.007)
+
+
 def test_all_queries_failing_exits_nonzero_without_creating_issue_in_dry_run():
     with patch("tracker.main.discover.run_query", side_effect=DiscoveryError("401 unauthorized")):
         with pytest.raises(SystemExit) as exc_info:
@@ -58,7 +62,7 @@ def test_partial_query_failure_does_not_exit():
     def fake_run_query(query, **kwargs):
         if query == "query one":
             raise DiscoveryError("timeout")
-        return [_candidate()]
+        return _query_result([_candidate()])
 
     with patch("tracker.main.discover.run_query", side_effect=fake_run_query):
         with patch("tracker.main.verify", return_value=VerificationResult(_candidate(), True, "ok")):
@@ -66,7 +70,7 @@ def test_partial_query_failure_does_not_exit():
 
 
 def test_dry_run_does_not_write_csv_or_seen_state():
-    with patch("tracker.main.discover.run_query", return_value=[_candidate()]):
+    with patch("tracker.main.discover.run_query", return_value=_query_result([_candidate()])):
         with patch("tracker.main.verify", return_value=VerificationResult(_candidate(), True, "ok")):
             main.run(repo=None, dry_run=True)
 
@@ -75,7 +79,7 @@ def test_dry_run_does_not_write_csv_or_seen_state():
 
 
 def test_real_run_writes_csv_and_seen_state():
-    with patch("tracker.main.discover.run_query", return_value=[_candidate()]):
+    with patch("tracker.main.discover.run_query", return_value=_query_result([_candidate()])):
         with patch("tracker.main.verify", return_value=VerificationResult(_candidate(), True, "ok")):
             main.run(repo=None, dry_run=False)
 
@@ -84,7 +88,7 @@ def test_real_run_writes_csv_and_seen_state():
 
 
 def test_real_run_creates_digest_issue_only_when_repo_and_accepted_given():
-    with patch("tracker.main.discover.run_query", return_value=[_candidate()]):
+    with patch("tracker.main.discover.run_query", return_value=_query_result([_candidate()])):
         with patch("tracker.main.verify", return_value=VerificationResult(_candidate(), True, "ok")):
             with patch("tracker.main.emit.create_digest_issue") as mock_digest:
                 main.run(repo="owner/repo", dry_run=False)

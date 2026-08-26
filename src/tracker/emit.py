@@ -120,8 +120,9 @@ class RunSummary:
     def __init__(self):
         self.lines: list[str] = ["# LAS venue tracker — run summary", ""]
 
-    def query_ok(self, query: str, candidate_count: int) -> None:
-        self.lines.append(f"- query `{query}`: {candidate_count} candidate(s)")
+    def query_ok(self, query: str, candidate_count: int, cost_usd: float | None = None) -> None:
+        cost_note = f", ${cost_usd:.4f}" if cost_usd is not None else ", cost unknown"
+        self.lines.append(f"- query `{query}`: {candidate_count} candidate(s){cost_note}")
 
     def query_failed(self, query: str, error: str) -> None:
         self.lines.append(f"- query `{query}`: **FAILED** — {error}")

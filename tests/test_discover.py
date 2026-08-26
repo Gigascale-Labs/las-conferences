@@ -16,11 +16,12 @@ CANDIDATE_KWARGS = dict(
 )
 
 
-def _openrouter_response(candidates: list[dict]) -> Mock:
+def _openrouter_response(candidates: list[dict], usage: dict | None = None) -> Mock:
     resp = Mock()
     resp.raise_for_status = Mock()
     resp.json.return_value = {
-        "choices": [{"message": {"content": json.dumps({"candidates": candidates})}}]
+        "choices": [{"message": {"content": json.dumps({"candidates": candidates})}}],
+        "usage": usage if usage is not None else {"prompt_tokens": 100, "completion_tokens": 20, "cost": 0.007},
     }
     return resp
 
@@ -37,19 +38,50 @@ def test_parses_candidates_from_response():
         "reputability_rationale": "Affiliated with the AAMAS conference series.",
     }
     with patch("tracker.discover.requests.post", return_value=_openrouter_response([candidate_payload])):
-        candidates = run_query("agent economies workshop", **CANDIDATE_KWARGS)
+        result = run_query("agent economies workshop", **CANDIDATE_KWARGS)
 
-    assert len(candidates) == 1
-    assert isinstance(candidates[0], Candidate)
-    assert candidates[0].name == "AAMAS 2027 Workshop on Agent Economies"
-    assert candidates[0].query == "agent economies workshop"
+    assert len(result.candidates) == 1
+    assert isinstance(result.candidates[0], Candidate)
+    assert result.candidates[0].name == "AAMAS 2027 Workshop on Agent Economies"
+    assert result.candidates[0].query == "agent economies workshop"
+
+
+def test_usage_and_cost_are_surfaced_from_response():
+    usage = {"prompt_tokens": 4321, "completion_tokens": 654, "cost": 0.0123}
+    with patch("tracker.discover.requests.post", return_value=_openrouter_response([], usage=usage)):
+        result = run_query("cost query", **CANDIDATE_KWARGS)
+
+    assert result.prompt_tokens == 4321
+    assert result.completion_tokens == 654
+    assert result.cost_usd == 0.0123
+
+
+def test_missing_usage_surfaces_none_cost_rather_than_erroring():
+    resp = Mock()
+    resp.raise_for_status = Mock()
+    resp.json.return_value = {"choices": [{"message": {"content": json.dumps({"candidates": []})}}]}
+    with patch("tracker.discover.requests.post", return_value=resp):
+        result = run_query("no usage field query", **CANDIDATE_KWARGS)
+
+    assert result.cost_usd is None
+
+
+def test_web_plugin_is_pinned_to_exa_engine():
+    """Regression guard: leaving `engine` unset makes OpenRouter silently use
+    each provider's native (often agentic, much costlier) search tool instead
+    — this is what drove a $2 spend across 2 real queries on 2026-08-26."""
+    with patch("tracker.discover.requests.post", return_value=_openrouter_response([])) as mock_post:
+        run_query("engine check query", **CANDIDATE_KWARGS)
+
+    sent_body = mock_post.call_args.kwargs["json"]
+    assert sent_body["plugins"] == [{"id": "web", "engine": "exa", "max_results": CANDIDATE_KWARGS["max_results"]}]
 
 
 def test_empty_candidates_list_returns_empty():
     with patch("tracker.discover.requests.post", return_value=_openrouter_response([])):
-        candidates = run_query("no results query", **CANDIDATE_KWARGS)
+        result = run_query("no results query", **CANDIDATE_KWARGS)
 
-    assert candidates == []
+    assert result.candidates == []
 
 
 def test_http_error_raises_discovery_error():
