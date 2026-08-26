@@ -1,0 +1,55 @@
+# Discovery scope, model, and search queries for the LAS venue & CFP tracker.
+# See SPEC.md for what each section means and why. Nothing here is hardcoded
+# in Python — edit this file to change what the tracker searches for or judges
+# as relevant/reputable.
+
+meta:
+  repo_url: "https://github.com/stephen-elliott/las-venue-tracker"
+  maintainer_email: "stephen.elliott231@gmail.com"
+
+model:
+  # OpenRouter model slug. Cost at weekly cadence is dominated by the flat
+  # per-search-call fee (~$0.01-0.02/call), not token price, across every
+  # model checked 2026-08-26 (Claude Sonnet 5, gpt-oss-120b, Kimi K2 all land
+  # within ~15% of each other per run) — so swap this freely without
+  # re-pricing the whole pipeline. Re-check OpenRouter's pricing if it's been
+  # a while; it changes over time.
+  id: "anthropic/claude-sonnet-5"
+  max_output_tokens: 4000
+
+search:
+  max_results_per_query: 8
+  queries:
+    - "call for papers workshop large-scale multi-agent systems 2026 2027"
+    - "conference AI safety multi-agent systems governance systemic risk"
+    - "workshop mechanism design AI agents economy call for papers"
+    - "cooperative AI multi-agent workshop NeurIPS ICML AAMAS 2026 2027"
+    - "gradual disempowerment AI governance workshop symposium"
+    - "market microstructure algorithmic trading AI agents conference"
+    - "macroprudential regulation AI agents systemic risk workshop"
+    - "network science large-scale complex systems conference 2026"
+    - "AI agent evaluation benchmark workshop call for papers"
+    - "interpretability at scale multi-agent systems workshop"
+
+relevance:
+  description: >
+    largeagentsystems.org (a Gigascale Labs project) studies the science of
+    billion-scale multi-agent systems: monitoring, steering, simulating, and
+    redesigning mixed human-AI systems so outcomes stay pro-human as millions
+    of AI agents enter human economies and societies. In-scope disciplines
+    named by the site itself: network science, macroprudential regulation,
+    market microstructure, mechanism design, cooperative AI, interpretability
+    at scale, and behavioral evaluation of agent populations. An item must
+    connect to this large-scale/systemic framing specifically — a workshop
+    about multi-agent systems in general, with no connection to scale,
+    systemic risk, or governance of agent populations, is NOT in scope.
+
+reputability:
+  criteria: >
+    Accept only events with a real, named organizing body: a university, a
+    named research lab, an established academic society, or a recognized
+    conference series (e.g. a NeurIPS/ICML/AAMAS-affiliated workshop). The
+    event must have independently-checkable existence: a live CFP or event
+    page, or a listing on a known indexer (WikiCFP, DBLP, OpenReview). Reject
+    personal blogs, content-farm listicles, and any page that does not name
+    an organizer.

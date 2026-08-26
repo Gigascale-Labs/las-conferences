@@ -1,51 +1,33 @@
-"""Outputs (spec section 6): CSV append, GitHub issue creation, run summary."""
+"""Outputs (SPEC.md section 7): CSV append, one weekly digest GitHub issue, run
+summary.
+"""
 from __future__ import annotations
 
 import csv
-import json
 import os
 import subprocess
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from tracker.verify import VerificationResult
+
 CSV_COLUMNS = [
-    "date_seen",
-    "source_id",
-    "tier",
-    "title",
+    "date_found",
+    "name",
+    "event_type",
+    "dates",
+    "location",
+    "organizer",
     "url",
-    "matched_topics",
-    "priority",
-    "published_date",
-    "notes",
+    "query",
+    "relevance_rationale",
+    "reputability_rationale",
+    "verification_note",
 ]
 
-ISSUE_LABELS = {
-    "cfp": "d73a4a",
-    "tracker-maintenance": "ededed",
-    "multi_agent": "0e8a16",
-    "digital_twin": "1d76db",
-    "comp_econ": "fbca04",
-    "css": "5319e7",
-    "llm_evals": "b60205",
-}
 
-
-@dataclass
-class Finding:
-    source_id: str
-    tier: str
-    title: str
-    url: str
-    matched_topics: list[str] = field(default_factory=list)
-    priority: str = "normal"
-    published_date: str = ""
-    notes: str = ""
-
-
-def append_csv(path: Path, findings: list[Finding]) -> None:
-    if not findings:
+def append_csv(path: Path, accepted: list[VerificationResult]) -> None:
+    if not accepted:
         return
     is_new = not path.exists()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -54,18 +36,21 @@ def append_csv(path: Path, findings: list[Finding]) -> None:
         if is_new:
             writer.writeheader()
         today = datetime.now(timezone.utc).date().isoformat()
-        for finding in findings:
+        for result in accepted:
+            c = result.candidate
             writer.writerow(
                 {
-                    "date_seen": today,
-                    "source_id": finding.source_id,
-                    "tier": finding.tier,
-                    "title": finding.title,
-                    "url": finding.url,
-                    "matched_topics": ";".join(finding.matched_topics),
-                    "priority": finding.priority,
-                    "published_date": finding.published_date,
-                    "notes": finding.notes,
+                    "date_found": today,
+                    "name": c.name,
+                    "event_type": c.event_type,
+                    "dates": c.dates,
+                    "location": c.location,
+                    "organizer": c.organizer,
+                    "url": c.url,
+                    "query": c.query,
+                    "relevance_rationale": c.relevance_rationale,
+                    "reputability_rationale": c.reputability_rationale,
+                    "verification_note": result.reason,
                 }
             )
 
@@ -75,90 +60,60 @@ def _gh(*args: str) -> str:
     return result.stdout
 
 
-def ensure_labels(repo: str) -> None:
-    try:
-        existing = {item["name"] for item in json.loads(_gh("label", "list", "--repo", repo, "--json", "name"))}
-    except (subprocess.CalledProcessError, json.JSONDecodeError):
-        return
-    for name, color in ISSUE_LABELS.items():
-        if name in existing:
-            continue
-        try:
-            _gh("label", "create", name, "--repo", repo, "--color", color)
-        except subprocess.CalledProcessError:
-            pass  # non-fatal: issue creation still works without a custom color
-
-
-def _open_issue_bodies_matching(search: str, repo: str) -> list[dict]:
-    out = _gh(
-        "issue", "list", "--repo", repo, "--state", "open",
-        "--search", search, "--json", "title,body",
-    )
-    return json.loads(out)
-
-
-def create_cfp_issue(finding: Finding, repo: str) -> bool:
-    """Create a [CFP] issue for a high-priority finding, deduped by URL. Returns
-    True if an issue was created, False if one already existed for this URL."""
-    try:
-        if any(finding.url in (item.get("body") or "") for item in _open_issue_bodies_matching(finding.url, repo)):
-            return False
-    except (subprocess.CalledProcessError, json.JSONDecodeError):
-        pass  # search failed open: proceed to create rather than silently drop the finding
-
-    body_lines = [
-        f"**Link:** {finding.url}",
-        f"**Source:** {finding.source_id} (tier {finding.tier})",
-        f"**Matched topics:** {', '.join(finding.matched_topics)}",
+def create_digest_issue(accepted: list[VerificationResult], repo: str) -> None:
+    """One issue per run listing every accepted item (SPEC.md section 7). Only
+    called by main.py when accepted is non-empty — no issue on an empty week.
+    """
+    today = datetime.now(timezone.utc).date().isoformat()
+    lines = [
+        f"{len(accepted)} new item(s) passed relevance, reputability, and URL "
+        "verification this run.",
+        "",
+        "| Name | Type | Dates | Organizer | Link |",
+        "|---|---|---|---|---|",
     ]
-    if finding.published_date:
-        body_lines.append(f"**Published:** {finding.published_date}")
-    if finding.notes:
-        body_lines.append(f"**Notes:** {finding.notes}")
+    for result in accepted:
+        c = result.candidate
+        lines.append(f"| {c.name} | {c.event_type} | {c.dates} | {c.organizer} | {c.url} |")
 
-    labels = ["cfp"] + [t for t in finding.matched_topics if t in ISSUE_LABELS]
-    _gh(
-        "issue", "create", "--repo", repo,
-        "--title", f"[CFP] {finding.title}",
-        "--body", "\n".join(body_lines),
-        "--label", ",".join(labels),
-    )
-    return True
-
-
-def create_maintenance_issue(title: str, body: str, repo: str) -> bool:
-    """Create a tracker-maintenance issue, deduped by exact title match."""
-    try:
-        if any(item.get("title") == title for item in _open_issue_bodies_matching(title, repo)):
-            return False
-    except (subprocess.CalledProcessError, json.JSONDecodeError):
-        pass
+    lines.append("")
+    lines.append("<details><summary>Rationale per item</summary>")
+    lines.append("")
+    for result in accepted:
+        c = result.candidate
+        lines.append(f"**{c.name}**")
+        lines.append(f"- Relevance: {c.relevance_rationale}")
+        lines.append(f"- Reputability: {c.reputability_rationale}")
+        lines.append(f"- Verification: {result.reason}")
+        lines.append("")
+    lines.append("</details>")
 
     _gh(
         "issue", "create", "--repo", repo,
-        "--title", title, "--body", body, "--label", "tracker-maintenance",
+        "--title", f"[weekly-scan] {len(accepted)} new item(s) — {today}",
+        "--body", "\n".join(lines),
+        "--label", "cfp",
     )
-    return True
 
 
 class RunSummary:
     def __init__(self):
-        self.lines: list[str] = ["# LAS Venue Tracker — run summary", ""]
+        self.lines: list[str] = ["# LAS venue tracker — run summary", ""]
 
-    def source_ok(self, source_id: str, new_items: int, relevant_items: int) -> None:
-        self.lines.append(f"- `{source_id}`: {new_items} new item(s), {relevant_items} relevant")
+    def query_ok(self, query: str, candidate_count: int) -> None:
+        self.lines.append(f"- query `{query}`: {candidate_count} candidate(s)")
 
-    def source_not_modified(self, source_id: str) -> None:
-        self.lines.append(f"- `{source_id}`: not modified (304)")
+    def query_failed(self, query: str, error: str) -> None:
+        self.lines.append(f"- query `{query}`: **FAILED** — {error}")
 
-    def source_no_change(self, source_id: str) -> None:
-        self.lines.append(f"- `{source_id}`: no change")
+    def candidate_skipped(self, candidate, reason: str) -> None:
+        self.lines.append(f"  - skipped `{candidate.name}` ({candidate.url}): {reason}")
 
-    def source_failed(self, source_id: str, error: str) -> None:
-        self.lines.append(f"- `{source_id}`: **FAILED** — {error}")
+    def candidate_rejected(self, candidate, reason: str) -> None:
+        self.lines.append(f"  - rejected `{candidate.name}` ({candidate.url}): {reason}")
 
-    def source_disabled(self, source_id: str) -> None:
-        self.lines.append(f"- `{source_id}`: disabled, skipped")
+    def candidate_accepted(self, candidate) -> None:
+        self.lines.append(f"  - accepted `{candidate.name}` ({candidate.url})")
 
     def write(self, path: str | None = None) -> None:
         path = path or os.environ.get("GITHUB_STEP_SUMMARY")

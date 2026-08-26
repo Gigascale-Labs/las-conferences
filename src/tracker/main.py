@@ -1,4 +1,6 @@
-"""Orchestrator: run all enabled sources across all tiers, merge, emit (spec section 1)."""
+"""Orchestrator (SPEC.md section 1): run every configured search query through
+OpenRouter, dedupe, verify each candidate for real, then emit.
+"""
 from __future__ import annotations
 
 import argparse
@@ -7,179 +9,114 @@ from pathlib import Path
 
 import yaml
 
-from tracker import emit, tier_a_feeds, tier_b_openreview, tier_c_pagediff
-from tracker.filters import classify, load_keywords
+from tracker import discover, emit
+from tracker.discover import DiscoveryError
 from tracker.net import RobotsCache, build_user_agent
-from tracker.state import SnapshotStore, State
+from tracker.state import SeenStore, normalize_url
+from tracker.verify import verify
 
 ROOT = Path(__file__).resolve().parents[2]
-CONFIG_DIR = ROOT / "config"
+CONFIG_PATH = ROOT / "config" / "scope.yaml"
 DATA_DIR = ROOT / "data"
 
-MAX_CONSECUTIVE_FAILURES = 4
-MAX_CONSECUTIVE_DIFF_EVENTS = 3
+
+def load_config() -> dict:
+    return yaml.safe_load(CONFIG_PATH.read_text())
 
 
-def load_config() -> tuple[dict, dict]:
-    sources_cfg = yaml.safe_load((CONFIG_DIR / "sources.yaml").read_text())
-    keywords = load_keywords(CONFIG_DIR / "keywords.yaml")
-    return sources_cfg, keywords
+def _dedupe_within_run(candidates: list[discover.Candidate]) -> list[discover.Candidate]:
+    by_url: dict[str, discover.Candidate] = {}
+    for candidate in candidates:
+        by_url.setdefault(normalize_url(candidate.url), candidate)
+    return list(by_url.values())
 
 
-def run(repo: str | None = None) -> None:
-    sources_cfg, keywords = load_config()
-    meta = sources_cfg.get("meta", {})
+def run(repo: str | None = None, dry_run: bool = False) -> None:
+    config = load_config()
+    meta = config["meta"]
+    model_cfg = config["model"]
+    search_cfg = config["search"]
+    relevance = config["relevance"]["description"]
+    reputability = config["reputability"]["criteria"]
+
+    api_key = os.environ["OPENROUTER_API_KEY"]
     user_agent = build_user_agent(meta["repo_url"], meta["maintainer_email"])
     robots = RobotsCache(user_agent)
-
-    state = State(DATA_DIR / "seen.json")
-    snapshots = SnapshotStore(DATA_DIR / "snapshots")
+    seen = SeenStore(DATA_DIR / "seen.json")
     summary = emit.RunSummary()
     repo = repo or os.environ.get("GITHUB_REPOSITORY")
 
-    if repo:
+    if dry_run:
+        summary.lines.append(
+            "**DRY RUN** — data/discoveries.csv, data/seen.json, and the GitHub "
+            "issue below are NOT written. This is what would have happened."
+        )
+
+    all_candidates: list[discover.Candidate] = []
+    for query in search_cfg["queries"]:
         try:
-            emit.ensure_labels(repo)
-        except Exception:  # noqa: BLE001 - label setup is best-effort, never fatal
-            pass
+            candidates = discover.run_query(
+                query,
+                api_key=api_key,
+                model=model_cfg["id"],
+                relevance=relevance,
+                reputability=reputability,
+                max_results=search_cfg["max_results_per_query"],
+                max_output_tokens=model_cfg["max_output_tokens"],
+            )
+        except DiscoveryError as exc:
+            summary.query_failed(query, str(exc))
+            continue
+        summary.query_ok(query, len(candidates))
+        all_candidates.extend(candidates)
 
-    all_findings: list[emit.Finding] = []
-
-    for source in sources_cfg.get("sources", []):
-        source_id = source["id"]
-        if not source.get("enabled", True):
-            summary.source_disabled(source_id)
+    accepted = []
+    for candidate in _dedupe_within_run(all_candidates):
+        if seen.is_seen(candidate.url):
+            summary.candidate_skipped(candidate, "already reported in a previous run")
             continue
 
+        result = verify(candidate, user_agent=user_agent, robots=robots)
+        if not result.verified:
+            summary.candidate_rejected(candidate, result.reason)
+            continue
+
+        summary.candidate_accepted(candidate)
+        accepted.append(result)
+        seen.mark_seen(candidate.url)
+
+    if dry_run:
+        if accepted:
+            summary.lines.append(f"- would append {len(accepted)} row(s) to data/discoveries.csv")
+            summary.lines.append(f"- would open digest issue: [weekly-scan] {len(accepted)} new item(s)")
+        summary.write()
+        return
+
+    emit.append_csv(DATA_DIR / "discoveries.csv", accepted)
+
+    if repo and accepted:
         try:
-            findings = _run_source(source, state, snapshots, keywords, user_agent, robots, summary, repo)
-            state.record_success(source_id)
-            state.set_failure_issue_open(source_id, False)
-            all_findings.extend(findings)
-        except Exception as exc:  # noqa: BLE001 - one broken source must never fail the run (ground rule 5)
-            summary.source_failed(source_id, str(exc))
-            failures = state.record_failure(source_id)
-            if failures >= MAX_CONSECUTIVE_FAILURES and not state.failure_issue_open(source_id) and repo:
-                created = emit.create_maintenance_issue(
-                    f"[tracker] source {source_id} failing",
-                    f"`{source_id}` has failed {failures} consecutive runs.\n\nLatest error:\n```\n{exc}\n```",
-                    repo,
-                )
-                if created:
-                    state.set_failure_issue_open(source_id, True)
+            emit.create_digest_issue(accepted, repo)
+        except Exception as exc:  # noqa: BLE001 - a failed issue post must not lose the CSV write above
+            summary.lines.append(f"- digest issue creation failed: {exc}")
 
-    emit.append_csv(DATA_DIR / "venues.csv", all_findings)
-
-    if repo:
-        for finding in (f for f in all_findings if f.priority == "high"):
-            try:
-                emit.create_cfp_issue(finding, repo)
-            except Exception as exc:  # noqa: BLE001 - keep going even if one issue creation fails
-                summary.lines.append(f"- issue creation failed for {finding.url}: {exc}")
-
-    state.save()
+    seen.save()
     summary.write()
 
 
-def _run_source(source, state, snapshots, keywords, user_agent, robots, summary, repo) -> list[emit.Finding]:
-    source_id = source["id"]
-    tier = source["tier"]
-
-    if tier == "A":
-        if source.get("format") == "csv":
-            items = tier_a_feeds.poll_csv_index(
-                source_id, source["url"], user_agent=user_agent, robots=robots, state=state,
-                id_field=source.get("csv_id_field", "full_name"),
-            )
-        else:
-            items = tier_a_feeds.poll_feed(
-                source_id, source["url"], user_agent=user_agent, robots=robots, state=state
-            )
-        findings = _classify_items(items, keywords)
-        summary.source_ok(source_id, len(items), len(findings))
-        return findings
-
-    if tier == "B":
-        items = tier_b_openreview.poll_venues(
-            source_id, source.get("parents", []), source.get("years", []), state=state
-        )
-        findings = _classify_items(items, keywords)
-        summary.source_ok(source_id, len(items), len(findings))
-        return findings
-
-    if tier == "C":
-        first_run = snapshots.load(source_id) is None
-        event = tier_c_pagediff.check_page(
-            source_id, source["url"],
-            user_agent=user_agent, robots=robots, snapshots=snapshots,
-            selector=source.get("selector"),
-        )
-        noise_count = state.record_diff_event(source_id, event is not None)
-
-        if first_run:
-            summary.lines.append(f"- `{source_id}`: seeded snapshot (first run)")
-            return []
-        if event is None:
-            summary.source_no_change(source_id)
-            return []
-
-        text_blob = "\n".join(event.added_lines)
-        relevance = classify(source.get("name", source_id), text_blob, keywords)
-        findings = []
-        if relevance.relevant:
-            findings.append(
-                emit.Finding(
-                    source_id=source_id,
-                    tier="C",
-                    title=f"Change detected: {source.get('name', source_id)}",
-                    url=source["url"],
-                    matched_topics=relevance.matched_topics,
-                    priority=relevance.priority,
-                    notes=text_blob[:500],
-                )
-            )
-        summary.source_ok(source_id, 1, len(findings))
-
-        if noise_count > MAX_CONSECUTIVE_DIFF_EVENTS and not state.diff_noise_issue_open(source_id) and repo:
-            created = emit.create_maintenance_issue(
-                f"[tracker] source {source_id} diff noise",
-                f"`{source_id}` has produced a non-empty diff on {noise_count} consecutive runs — "
-                "likely a dynamic page element surviving normalisation. Consider adding a tighter "
-                "`selector:` for this source in config/sources.yaml.",
-                repo,
-            )
-            if created:
-                state.set_diff_noise_issue_open(source_id, True)
-        return findings
-
-    raise ValueError(f"unknown tier {tier!r} for source {source_id}")
-
-
-def _classify_items(items, keywords) -> list[emit.Finding]:
-    findings = []
-    for item in items:
-        relevance = classify(item.title, item.summary, keywords)
-        if not relevance.relevant:
-            continue
-        findings.append(
-            emit.Finding(
-                source_id=item.source_id,
-                tier=item.tier,
-                title=item.title,
-                url=item.url,
-                matched_topics=relevance.matched_topics,
-                priority=relevance.priority,
-                published_date=item.published_date,
-            )
-        )
-    return findings
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() == "true"
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", default=None, help="owner/repo, defaults to $GITHUB_REPOSITORY")
+    parser.add_argument(
+        "--dry-run", action="store_true", default=_env_flag("DRY_RUN"),
+        help="skip writing data/ and creating an issue; defaults to $DRY_RUN",
+    )
     args = parser.parse_args()
-    run(repo=args.repo)
+    run(repo=args.repo, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
