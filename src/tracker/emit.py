@@ -104,8 +104,8 @@ def create_digest_issue(kept: list[VerificationResult], repo: str) -> None:
 
 
 class RunSummary:
-    def __init__(self):
-        self.lines: list[str] = ["# LAS venue tracker — run summary", ""]
+    def __init__(self, title: str = "LAS venue tracker — run summary"):
+        self.lines: list[str] = [f"# {title}", ""]
 
     def query_ok(self, query: str, candidate_count: int, cost_usd: float | None = None) -> None:
         cost_note = f", ${cost_usd:.4f}" if cost_usd is not None else ", cost unknown"

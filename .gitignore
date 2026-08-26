@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Pre-write copies of data/discoveries.db taken by tracker.restyle, and the
+# copy .github/workflows/restyle-descriptions.yaml uploads as a run artifact.
+# Local safety nets, not repo state — committing them would grow the repo for
+# no benefit (SPEC.md section 7 on the SQLite-in-git tradeoff).
+data/backups/
+backup/

@@ -78,6 +78,39 @@ Found live during initial testing (2026-08-26): the workflow's secret was
 misnamed, every query got an empty bearer token, and the run exited 0 anyway
 — exactly the failure mode this check now catches.
 
+## 4a. Writing rules for the reader-facing fields
+
+Three of the model's output fields are read by humans as prose:
+`description`, `relevance_rationale`, `reputability_rationale`. All three are
+rendered in the weekly digest issue and published verbatim in
+`docs/events.json`, which largeagentsystems.org/events reads. All three
+therefore carry this project's writing ruleset, stated in
+`discover.STYLE_RULES` and appended to the discovery prompt. The other fields
+(name, url, dates, location, organizer) are transcription and carry no style
+rule.
+
+The ruleset was written for prose, code review and charts, so it is adapted,
+not pasted. `discover.py` carries a per-clause record of what was kept as-is,
+what was adapted and how, and what was dropped and why — the three
+visualisation clauses (this pipeline draws nothing) and the "use a table"
+clause (these fields land in a markdown table cell and a JSON string, where a
+nested table renders in neither). Nothing was dropped silently; edit that
+comment if the ruleset changes.
+
+`src/tracker/restyle.py` (`python -m tracker.restyle`, and the manual-only
+`.github/workflows/restyle-descriptions.yaml`) applies the same rules to
+`description` on rows already in `data/discoveries.db`, which predate the
+rules, then regenerates `docs/events.json` through `feed.write_json_feed`.
+It is a **restyle, not a re-extraction**: the model gets the event name and
+the stored description and nothing else — not the scraped page, which would
+invite re-deriving a description from source, producing new claims with no
+verification step (section 5) behind them. The prompt forbids adding any
+claim not already in the text it is given, and permits deletion only. A model
+call that fails, returns an unknown id, omits an id, or returns an empty
+string leaves that row's original description in place and is reported;
+descriptions are never blanked. Every batch failing exits non-zero, the same
+systemic-failure rule as section 4.
+
 ## 5. Verification (anti-hallucination)
 
 An LLM web-search call can name a plausible event that does not exist, or get

@@ -24,6 +24,94 @@ REQUEST_TIMEOUT_SECONDS = 60
 # which model is configured.
 WEB_PLUGIN_ENGINE = "exa"
 
+# --------------------------------------------------------------------------
+# Writing rules for the reader-facing text fields
+# --------------------------------------------------------------------------
+# `description`, `relevance_rationale` and `reputability_rationale` are the
+# only three fields a human reads as prose. All three are rendered in the
+# weekly digest issue (emit.create_digest_issue) and published verbatim in
+# docs/events.json, which largeagentsystems.org/events reads — so the rules
+# below are applied to all three, not to `description` alone. The remaining
+# schema fields (name, url, dates, location, organizer) are transcription and
+# take no style rule.
+#
+# These are this project's general writing ruleset, adapted. That ruleset was
+# written for prose, code review and charts; an event description is one
+# sentence with nothing measured, no table and no chart in it, so it is
+# carried across rather than pasted. What was carried, and what was NOT and
+# why — nothing here was dropped silently:
+#
+#   as-is     "Answer in the first sentence."
+#   as-is     "Give facts and numbers, not justifications."
+#   as-is     "No metaphor, no praise, no filler, no stacked hedges."
+#   adapted   "State every number with its n and its spread." Nothing in this
+#             pipeline is measured; the only numbers available are dates,
+#             deadlines and edition numbers transcribed off a page. Demanding
+#             an n and a spread would make the model invent statistics.
+#             Carried as: use the numbers the sources state and no others.
+#   adapted   "Label what you measured, observed, inferred, assumed." One
+#             sentence has no room for four labels, and the model measures
+#             nothing. Carried as the stronger rule for this case: state only
+#             what the sources state, and omit anything you would infer.
+#   adapted   "Name what you did not check." Nothing here is checked by the
+#             model — verify.py performs the only real check, after the fact.
+#             Carried into reputability_rationale as: name where the claim
+#             came from, and say when only the event's own page makes it.
+#   adapted   "Say 'I do not know' when you do not know, and name the test
+#             that would settle it." The schema requires a non-empty string
+#             for every field, so "I do not know" is not an available answer,
+#             and the test that settles existence (fetch the URL) is chosen by
+#             verify.py, not by the model. Carried as: say what the sources do
+#             not state instead of guessing at it.
+#   adapted   "Then give the detail." A description is one sentence — there is
+#             no second part to hold detail. Kept for the two rationales only.
+#   dropped   "Use a table for three or more parallel items." These fields
+#             land inside a markdown table cell in the digest issue and inside
+#             a JSON string in the feed. A nested table renders in neither.
+#   dropped   "Avoid making claims in visualisation titles." / "Label
+#             visualisation axes and provide keys." / "Do not overlay two
+#             visualisation elements using the same colour." This pipeline
+#             draws nothing — no chart, no image, no diagram anywhere in it.
+
+DESCRIPTION_RULES = (
+    "- One sentence, and it answers 'what does this event cover?' in that "
+    "sentence. Not why it matters, not who should attend, not how good it is.\n"
+    "- Facts, not justification: name the subject matter, methods and "
+    "disciplines the sources state.\n"
+    "- Use the numbers the sources state (dates, deadlines, edition number) "
+    "and no others. Never estimate, round, or invent a number.\n"
+    "- State only what the sources state. Leave out anything you would have "
+    "to infer or guess at. A shorter sentence is correct; a padded one is not.\n"
+    "- No metaphor, no praise, no filler, no stacked hedges. Cut words like "
+    "'leading', 'premier', 'cutting-edge', 'exciting', 'may potentially'.\n"
+    "- No throat-clearing opener ('This workshop aims to bring together "
+    "researchers in order to explore...'). Open on the subject matter."
+)
+
+RATIONALE_RULES = (
+    "- Answer in the first sentence, then give the detail.\n"
+    "- relevance_rationale: state the in-scope subject matter the event's own "
+    "page states, and which part of the relevance bar above it matches. Not "
+    "how strong the match feels.\n"
+    "- reputability_rationale: name the organizing body, the conference "
+    "series, or the indexer that lists the event, and say where that came "
+    "from — the event's own page, or an independent listing. Say so plainly "
+    "when only the event's own page claims it; a self-description is not "
+    "independent evidence.\n"
+    "- Facts, not praise. 'Listed on WikiCFP, organizer given as the AAMAS "
+    "2027 programme committee' is a fact. 'A highly respected venue' is not.\n"
+    "- Same rule as above on metaphor, praise, filler and stacked hedges.\n"
+    "- Where the sources do not state something, say it is not stated rather "
+    "than guessing at it."
+)
+
+STYLE_RULES = (
+    "Writing rules for the three fields a human reads — `description`, "
+    "`relevance_rationale`, `reputability_rationale`:\n\n"
+    f"description:\n{DESCRIPTION_RULES}\n\n"
+    f"relevance_rationale and reputability_rationale:\n{RATIONALE_RULES}"
+)
+
 CANDIDATE_PROPERTIES = {
     "name": {"type": "string"},
     "url": {"type": "string"},
@@ -33,10 +121,19 @@ CANDIDATE_PROPERTIES = {
     "organizer": {"type": "string"},
     "description": {
         "type": "string",
-        "description": "One neutral sentence on what the event covers — topic/scope, not why it's relevant or reputable.",
+        "description": (
+            "One sentence on what the event covers — topic/scope, not why it's "
+            "relevant or reputable. Follow the writing rules in the prompt."
+        ),
     },
-    "relevance_rationale": {"type": "string"},
-    "reputability_rationale": {"type": "string"},
+    "relevance_rationale": {
+        "type": "string",
+        "description": "Why this is in scope. Follow the writing rules in the prompt.",
+    },
+    "reputability_rationale": {
+        "type": "string",
+        "description": "Who runs it and how that is checkable. Follow the writing rules in the prompt.",
+    },
 }
 
 CANDIDATE_SCHEMA = {
@@ -93,12 +190,13 @@ def _prompt(query: str, relevance: str, reputability: str, max_candidates: int) 
         "— the most relevant and reputable ones first if more than "
         f"{max_candidates} qualify. For each, give its dates and location "
         "exactly as stated in the results (empty string if not stated — do "
-        "not guess), and a one-sentence neutral description of what the "
-        "event covers, separate from why it's relevant or reputable. Skip "
+        "not guess), and a one-sentence description of what the event covers, "
+        "separate from why it's relevant or reputable. Skip "
         "anything whose CFP/registration has already closed with no future "
         "edition mentioned in the results. If nothing in the results "
         "qualifies, return an empty candidates list rather than including a "
-        "borderline or invented item."
+        "borderline or invented item.\n\n"
+        f"{STYLE_RULES}"
     )
 
 

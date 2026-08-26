@@ -54,6 +54,36 @@ Edit [`config/scope.yaml`](config/scope.yaml):
 - `model.id` — any OpenRouter model slug. See SPEC.md section 8 for measured
   per-query cost and why model choice moves it more than originally assumed.
 
+The writing rules for the three fields a human reads (`description`,
+`relevance_rationale`, `reputability_rationale`) are `STYLE_RULES` in
+[`src/tracker/discover.py`](src/tracker/discover.py), not config — the
+comment above them records which clauses of the project ruleset were carried,
+adapted or dropped, and why. See SPEC.md section 4a.
+
+## Restyling descriptions already in the database
+
+Rows written before the writing rules existed can be rewritten in place:
+
+```bash
+OPENROUTER_API_KEY=... python -m tracker.restyle --dry-run --limit 2   # prints old -> new, writes nothing
+OPENROUTER_API_KEY=... python -m tracker.restyle                       # rewrites, then regenerates docs/events.json
+```
+
+A real run copies `data/discoveries.db` to `data/backups/` (gitignored) before
+its first write and prints where. This is a **restyle, not a re-extraction**:
+the model sees the stored description and the event name only, and may not add
+a claim that is not already in that text. A row whose rewrite fails keeps its
+original description — nothing is ever blanked.
+
+In CI, run the manual-only `restyle-descriptions.yaml` workflow (`dry_run`
+defaults to true, and every run uploads a pre-run copy of the database and
+feed as an artifact):
+
+```bash
+gh workflow run restyle-descriptions.yaml                     # dry run
+gh workflow run restyle-descriptions.yaml -f dry_run=false    # writes and commits
+```
+
 ## Testing without touching main's data or issues
 
 `workflow_dispatch` defaults `dry_run` to true: the run still calls
