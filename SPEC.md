@@ -97,6 +97,14 @@ clause (these fields land in a markdown table cell and a JSON string, where a
 nested table renders in neither). Nothing was dropped silently; edit that
 comment if the ruleset changes.
 
+The ruleset gained **"Do not use passive voice."** on 2026-08-26 and all three
+fields carry it as-is. It was added after the restyle run that day turned
+"This workshop addresses the systems foundations—sandboxing, privacy, ..."
+into "Systems foundations ... are addressed": the no-throat-clearing rule
+pushed the model into the passive and no rule pulled it back. Both rule sets
+now carry that before/after, so dropping a weak opener does not cost the
+active voice again.
+
 `src/tracker/restyle.py` (`python -m tracker.restyle`, and the manual-only
 `.github/workflows/restyle-descriptions.yaml`) applies the same rules to
 `description` on rows already in `data/discoveries.db`, which predate the

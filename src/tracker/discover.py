@@ -44,11 +44,25 @@ WEB_PLUGIN_ENGINE = "exa"
 #   as-is     "Answer in the first sentence."
 #   as-is     "Give facts and numbers, not justifications."
 #   as-is     "No metaphor, no praise, no filler, no stacked hedges."
+#   as-is     "Do not use passive voice." Added to the ruleset on 2026-08-26,
+#             the same day the restyle run showed why it is needed: the
+#             no-throat-clearing rule below rewrote "This workshop addresses
+#             the systems foundations—sandboxing, privacy, trust establishment
+#             without central control, and rigorous evaluation—needed to make
+#             internet-scale networks of autonomous, delegating AI agents
+#             trustworthy in practice." as "Systems foundations for
+#             internet-scale networks of autonomous, delegating AI agents are
+#             addressed, including ...". Dropping the weak opener cost the
+#             active voice, because no rule asked for it. Both rule sets below
+#             now state the clause and carry that before/after, so the trade is
+#             not made again.
 #   adapted   "State every number with its n and its spread." Nothing in this
 #             pipeline is measured; the only numbers available are dates,
 #             deadlines and edition numbers transcribed off a page. Demanding
 #             an n and a spread would make the model invent statistics.
-#             Carried as: use the numbers the sources state and no others.
+#             Carried as: use the numbers the sources state and no others —
+#             stated in full for `description`, referred back to for the two
+#             rationales, which can quote an edition number or a deadline too.
 #   adapted   "Label what you measured, observed, inferred, assumed." One
 #             sentence has no room for four labels, and the model measures
 #             nothing. Carried as the stronger rule for this case: state only
@@ -85,7 +99,20 @@ DESCRIPTION_RULES = (
     "- No metaphor, no praise, no filler, no stacked hedges. Cut words like "
     "'leading', 'premier', 'cutting-edge', 'exciting', 'may potentially'.\n"
     "- No throat-clearing opener ('This workshop aims to bring together "
-    "researchers in order to explore...'). Open on the subject matter."
+    "researchers in order to explore...'). Open on the subject matter.\n"
+    "- Do not use passive voice. Every verb keeps its actor: 'The workshop "
+    "covers X', 'Papers examine X', 'Covers X'. Never 'X is addressed', 'X "
+    "will be discussed', 'X are covered'.\n"
+    "- Dropping the opener must not cost the active voice. This exact trade "
+    "was made once: 'This workshop addresses the systems foundations - "
+    "sandboxing, privacy, trust establishment without central control - "
+    "needed to make internet-scale networks of autonomous, delegating AI "
+    "agents trustworthy in practice.' became 'Systems foundations for "
+    "internet-scale networks of autonomous, delegating AI agents are "
+    "addressed, including sandboxing, privacy, ...', which fixed the opener "
+    "and broke the rule above. Write both rules at once: 'Covers sandboxing, "
+    "privacy, trust establishment without central control, and evaluation of "
+    "internet-scale networks of autonomous, delegating AI agents.'"
 )
 
 RATIONALE_RULES = (
@@ -100,7 +127,15 @@ RATIONALE_RULES = (
     "independent evidence.\n"
     "- Facts, not praise. 'Listed on WikiCFP, organizer given as the AAMAS "
     "2027 programme committee' is a fact. 'A highly respected venue' is not.\n"
+    "- Do not use passive voice. Name the actor, because here the actor is "
+    "the evidence: 'WikiCFP lists the workshop' and 'IFAAMAS runs the series' "
+    "are checkable. 'The workshop is listed' hides who lists it. The same "
+    "trade as in the description rules applies — cutting a weak opener must "
+    "not turn the sentence passive.\n"
     "- Same rule as above on metaphor, praise, filler and stacked hedges.\n"
+    "- Same rule as above on numbers: use the numbers the sources state "
+    "(edition number, dates, deadlines) and no others. Never estimate, round, "
+    "or invent one.\n"
     "- Where the sources do not state something, say it is not stated rather "
     "than guessing at it."
 )
