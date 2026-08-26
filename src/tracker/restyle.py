@@ -3,8 +3,9 @@
 `discover.STYLE_RULES` was added after 32 rows had already been written, so
 the stored descriptions predate the writing rules the discovery prompt now
 applies to new rows. This module rewrites the existing rows to match, then
-regenerates docs/events.json from the rewritten table via the normal
-`feed.write_json_feed` path — the JSON feed is never hand-edited.
+regenerates docs/events.json and docs/events.xml from the rewritten table via
+the normal `feed.write_json_feed` / `feed.write_atom_feed` path — a published
+feed is never hand-edited.
 
 **Restyle only, no new facts.** The model is given the event name and the
 existing description and nothing else. It is deliberately NOT given the
@@ -259,7 +260,14 @@ def restyle(
             [(change.new, change.id) for change in report.changed],
         )
         conn.commit()
+        # Both public feeds carry `description`, so both are regenerated from
+        # the rewritten table. The Atom path derives its path from the JSON
+        # one (docs/events.json -> docs/events.xml) so the two cannot be
+        # pointed at different directories by accident. Entry <updated> comes
+        # from `date_scraped`, which a restyle never touches, so a restyle
+        # republishes changed text without re-announcing every event.
         feed.write_json_feed(conn, feed_path)
+        feed.write_atom_feed(conn, feed_path.with_suffix(".xml"))
         report.wrote = True
         return report
     finally:
@@ -270,8 +278,8 @@ def _summary_lines(report: RestyleReport, *, dry_run: bool) -> list[str]:
     lines = []
     if dry_run:
         lines.append(
-            "**DRY RUN** — data/discoveries.db and docs/events.json are NOT "
-            "written. This is what would have happened."
+            "**DRY RUN** — data/discoveries.db, docs/events.json and "
+            "docs/events.xml are NOT written. This is what would have happened."
         )
         lines.append("")
     lines.append(
@@ -285,7 +293,9 @@ def _summary_lines(report: RestyleReport, *, dry_run: bool) -> list[str]:
     if report.backup_path:
         lines.append(f"- backed up data/discoveries.db to `{report.backup_path}` before writing")
     if report.wrote:
-        lines.append("- wrote data/discoveries.db and regenerated docs/events.json")
+        lines.append(
+            "- wrote data/discoveries.db and regenerated docs/events.json and docs/events.xml"
+        )
     elif not dry_run:
         lines.append("- nothing changed, so nothing was written")
 

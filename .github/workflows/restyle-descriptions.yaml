@@ -26,7 +26,7 @@ permissions:
   contents: write
 
 # Shared with track.yaml on purpose: the weekly tracker and this job both
-# write data/discoveries.db and docs/events.json, and discoveries.db is
+# write data/discoveries.db and the docs/ feeds, and discoveries.db is
 # binary, so two concurrent runs cannot be merged afterwards. Queue, don't
 # cancel — a cancelled restyle mid-write is worse than a delayed one.
 concurrency:
@@ -60,11 +60,12 @@ jobs:
       # also takes its own timestamped copy in data/backups/, but that copy
       # lives on the runner and dies with it — this is the one a human can
       # download from the run page.
-      - name: Back up the database and feed
+      - name: Back up the database and feeds
         run: |
           mkdir -p backup
           cp data/discoveries.db backup/discoveries.db
           cp docs/events.json backup/events.json
+          cp docs/events.xml backup/events.xml
 
       - name: Upload backup artifact
         uses: actions/upload-artifact@v4
@@ -114,7 +115,7 @@ jobs:
           # NOTE: track.yaml has the same bare-push weakness and is NOT
           # changed here.
           #
-          # data/discoveries.db is binary and docs/events.json is generated,
+          # data/discoveries.db is binary and the docs/ feeds are generated,
           # so a genuine conflict cannot be auto-resolved correctly: abort and
           # tell a human, rather than picking a side with -X ours/theirs. The
           # backup artifact above is what makes that recoverable.

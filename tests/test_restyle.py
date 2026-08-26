@@ -1,5 +1,6 @@
 import hashlib
 import json
+import xml.etree.ElementTree as ET
 from unittest.mock import Mock, patch
 
 import pytest
@@ -152,7 +153,7 @@ def test_dry_run_writes_nothing_and_leaves_the_db_byte_identical(tmp_path):
     assert len(report.changed) == 2  # it still reports what it would have done
 
 
-def test_write_backs_up_the_db_first_and_regenerates_the_feed(tmp_path):
+def test_write_backs_up_the_db_first_and_regenerates_both_feeds(tmp_path):
     path, ids = _seed(tmp_path, {"A": "old a"})
     before = _sha256(path)
     feed_path = tmp_path / "docs" / "events.json"
@@ -164,6 +165,12 @@ def test_write_backs_up_the_db_first_and_regenerates_the_feed(tmp_path):
     payload = json.loads(feed_path.read_text())
     assert payload["events"][0]["description"] == "new a"
     assert payload["count"] == 1
+
+    # Both published feeds carry `description`, so a restyle regenerates both.
+    atom = ET.fromstring((tmp_path / "docs" / "events.xml").read_text())
+    entries = atom.findall("{http://www.w3.org/2005/Atom}entry")
+    assert len(entries) == 1
+    assert "new a" in entries[0].find("{http://www.w3.org/2005/Atom}content").text
 
 
 def test_limit_only_touches_the_first_n_rows(tmp_path):

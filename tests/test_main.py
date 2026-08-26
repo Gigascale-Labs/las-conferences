@@ -78,6 +78,7 @@ def test_dry_run_does_not_write_db_feed_or_seen_state():
 
     assert not (main.DATA_DIR / "discoveries.db").exists()
     assert not (main.DOCS_DIR / "events.json").exists()
+    assert not (main.DOCS_DIR / "events.xml").exists()
     assert not (main.DATA_DIR / "seen.json").exists()
 
 
@@ -88,6 +89,7 @@ def test_real_run_writes_db_feed_and_seen_state():
 
     assert (main.DATA_DIR / "discoveries.db").exists()
     assert (main.DOCS_DIR / "events.json").exists()
+    assert (main.DOCS_DIR / "events.xml").exists()  # both feeds, every real run
     assert (main.DATA_DIR / "seen.json").exists()
 
     conn = db.connect(main.DATA_DIR / "discoveries.db")

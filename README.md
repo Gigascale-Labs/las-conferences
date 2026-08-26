@@ -28,15 +28,20 @@ Every Monday 20:00 UTC (and on manual `workflow_dispatch`):
    it was scraped) and open one digest GitHub issue for the run — confirmed
    and unverified-but-possibly-relevant items in separate tables — skipped
    entirely if nothing new was found.
-5. Regenerate [`docs/events.json`](docs/events.json) from the *entire*
-   database (not just this run) — a public JSON feed for
-   largeagentsystems.org or anything else to fetch. See SPEC.md section 7a for
-   the shape and for what wiring the actual site up still needs.
+5. Regenerate [`docs/events.json`](docs/events.json) and
+   [`docs/events.xml`](docs/events.xml) from the *entire* database (not just
+   this run) — a public JSON feed and an Atom 1.0 feed for
+   largeagentsystems.org or anything else to fetch. The site serves the Atom
+   file verbatim at `/events/feed.xml` rather than rebuilding it. Every Atom
+   timestamp comes from a row's `date_scraped`, never from a clock, so a
+   rebuild of unchanged rows is byte-identical and does not re-announce every
+   event to subscribers. See SPEC.md section 7a for both shapes, the entry-id
+   and escaping decisions, and what wiring the actual site up still needs.
 
-State (`data/seen.json`, `data/discoveries.db`, `docs/events.json`) is
-committed back to the repo at the end of each run, since GitHub Actions
-runners are ephemeral. This repo is public (since 2026-08-26) so the feed has
-a stable public URL once GitHub Pages is enabled on it.
+State (`data/seen.json`, `data/discoveries.db`, `docs/events.json`,
+`docs/events.xml`) is committed back to the repo at the end of each run, since
+GitHub Actions runners are ephemeral. This repo is public (since 2026-08-26)
+so the feeds have a stable public URL once GitHub Pages is enabled on it.
 
 ## Setup
 
@@ -66,7 +71,7 @@ Rows written before the writing rules existed can be rewritten in place:
 
 ```bash
 OPENROUTER_API_KEY=... python -m tracker.restyle --dry-run --limit 2   # prints old -> new, writes nothing
-OPENROUTER_API_KEY=... python -m tracker.restyle                       # rewrites, then regenerates docs/events.json
+OPENROUTER_API_KEY=... python -m tracker.restyle                       # rewrites, then regenerates both feeds
 ```
 
 A real run copies `data/discoveries.db` to `data/backups/` (gitignored) before
@@ -77,7 +82,7 @@ original description — nothing is ever blanked.
 
 In CI, run the manual-only `restyle-descriptions.yaml` workflow (`dry_run`
 defaults to true, and every run uploads a pre-run copy of the database and
-feed as an artifact):
+both feeds as an artifact):
 
 ```bash
 gh workflow run restyle-descriptions.yaml                     # dry run

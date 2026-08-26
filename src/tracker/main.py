@@ -50,9 +50,9 @@ def run(repo: str | None = None, dry_run: bool = False) -> None:
 
     if dry_run:
         summary.lines.append(
-            "**DRY RUN** — data/discoveries.db, docs/events.json, data/seen.json, "
-            "and the GitHub issue below are NOT written. This is what would have "
-            "happened."
+            "**DRY RUN** — data/discoveries.db, docs/events.json, docs/events.xml, "
+            "data/seen.json, and the GitHub issue below are NOT written. This is "
+            "what would have happened."
         )
 
     queries = search_cfg["queries"]
@@ -145,7 +145,9 @@ def run(repo: str | None = None, dry_run: bool = False) -> None:
     conn = db.connect(DATA_DIR / "discoveries.db")
     try:
         db.insert_events(conn, kept)
+        # Both public feeds, same rows, every run (SPEC.md section 7a).
         feed.write_json_feed(conn, DOCS_DIR / "events.json")
+        feed.write_atom_feed(conn, DOCS_DIR / "events.xml")
     finally:
         conn.close()
 

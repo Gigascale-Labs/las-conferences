@@ -12,7 +12,7 @@ Once a week, find new, reputable workshops, conferences, and CFPs relevant to
 the research scope of <https://www.largeagentsystems.org>, and log/notify on
 the ones that pass verification. Runs on GitHub Actions — no server; the only
 "database" is a SQLite file committed back to this repo (section 7). Findings
-are also published as a public JSON feed for largeagentsystems.org (or
+are also published as public JSON and Atom feeds for largeagentsystems.org (or
 anything else) to consume (section 7a).
 
 ## 2. Relevance scope
@@ -200,12 +200,14 @@ back to the repo" pattern; revisit if `data/discoveries.db` size becomes
 noticeable (`du -h data/discoveries.db` — no threshold picked yet for
 "noticeable").
 
-## 7a. Public feed and website
+## 7a. Public feeds and website
 
-`src/tracker/feed.py` regenerates `docs/events.json` from the *entire*
+`src/tracker/feed.py` regenerates **two** files from the *entire*
 `data/discoveries.db` table (not just this run's new rows) every real run, so
-it always reflects the cumulative current state, and is committed alongside
-`data/` in the same workflow step. Shape:
+both always reflect the cumulative current state, and both are committed
+alongside `data/` in the same workflow step: `docs/events.json` and
+`docs/events.xml`. `src/tracker/restyle.py` regenerates both as well, after it
+rewrites descriptions. JSON shape:
 
 ```json
 {
@@ -215,7 +217,42 @@ it always reflects the cumulative current state, and is committed alongside
 }
 ```
 
-This repo was made **public** on 2026-08-26 specifically so this feed has a
+`docs/events.xml` is an Atom 1.0 document holding the same rows, one `<entry>`
+each, newest `date_scraped` first, so largeagentsystems.org can serve it at
+`/events/feed.xml` as upstream bytes. This project group's rule: a feed is
+generated once, upstream, and every consumer serves it verbatim rather than
+rebuilding the document itself. Decisions worth naming, all enforced by tests
+in `tests/test_feed.py`:
+
+- **No clock.** Every `<updated>` derives from the row's `date_scraped`
+  (midnight UTC on that date); the feed-level `<updated>` is the newest of
+  them. Rebuilding an unchanged table produces byte-identical output, so a
+  rebuild does not re-announce every event to every subscriber. `generated_at`
+  in the JSON feed still moves every run — that difference is deliberate.
+- **Entry `<id>` is a `tag:` URI** built from the row's `uuid4`
+  (`tag:largeagentsystems.org,2026:event/<id>`), not from the event's own URL.
+  A reader uses the id to decide what it has already seen, so it must be
+  unique and immutable per event; the row id is assigned once at insert and
+  never updated, while a third party's URL can move, repeat across rows, or be
+  empty.
+- **Escaping is two layers.** Event text is third-party text a model copied.
+  Each value is escaped for HTML inside the `<content type="html">` fragment,
+  and the finished fragment is escaped again for XML, because Atom carries
+  HTML content as an ordinary XML text node. `&`, `<` or a literal
+  `</content></entry><entry>` in a name or description therefore cannot close
+  an element early or forge an entry. Link hrefs go through
+  `saxutils.quoteattr`.
+- **An empty or non-http(s) `url` still gets a full entry**, minus the
+  `<link rel="alternate">`: the row is a known event, and dropping it would
+  hide it from this feed while the JSON feed still lists it (section 5's
+  "don't silently drop it"). The entry stays addressable through its `<id>`,
+  and a non-empty but unusable URL is stated as plain text in the content so
+  the fact is not lost.
+- **A row that is not `verified` says so in its content**, because a feed
+  entry has no equivalent of the digest issue's separate tables (section 5: an
+  unverified item must never read as confirmed).
+
+This repo was made **public** on 2026-08-26 specifically so these feeds have a
 stable public URL — GitHub Pages cannot serve a private repo's contents
 without GitHub Enterprise, which this org does not have confirmed. Checked
 before flipping visibility: full working tree and `git log --all -p` (every
@@ -224,14 +261,14 @@ branch) for secret-shaped strings — none found beyond a test fixture's literal
 address and is now public as a side effect; flagged to the user, not yet
 changed.
 
-The feed includes *all* kept events regardless of `verification_status` —
+Both feeds include *all* kept events regardless of `verification_status` —
 deciding whether to display a `blocked` item is left to whatever consumes the
 feed, not filtered out here (section 5's "don't silently drop a BLOCKED item"
-reasoning applies to the public feed too). A consumer wanting only confirmed
+reasoning applies to the public feeds too). A consumer wanting only confirmed
 events should filter on `verification_status == "verified"` itself.
 
 **Integration with the actual largeagentsystems.org site is not done here.**
-This repo publishes the feed; wiring the live site to fetch and render it is
+This repo publishes the feeds; wiring the live site to fetch and render them is
 a change in that site's own codebase, which this repo has no access to.
 GitHub Pages itself also isn't enabled yet as of this writing — needs `docs/`
 to exist on a real branch first (chicken-and-egg with the first real run),
