@@ -5,7 +5,7 @@ import yaml
 
 from tracker import main
 from tracker.discover import Candidate, DiscoveryError, QueryResult
-from tracker.verify import VerificationResult
+from tracker.verify import BLOCKED, REJECTED, VERIFIED, VerificationResult
 
 SCOPE = {
     "meta": {"repo_url": "https://example.org/repo", "maintainer_email": "test@example.org"},
@@ -32,7 +32,7 @@ def _isolated_paths(tmp_path, monkeypatch):
 def _candidate(name="Test Workshop", url="https://example.org/event") -> Candidate:
     return Candidate(
         query="q", name=name, url=url, event_type="workshop", dates="", location="",
-        organizer="Test Org", relevance_rationale="r", reputability_rationale="rep",
+        organizer="Test Org", description="d", relevance_rationale="r", reputability_rationale="rep",
     )
 
 
@@ -65,13 +65,13 @@ def test_partial_query_failure_does_not_exit():
         return _query_result([_candidate()])
 
     with patch("tracker.main.discover.run_query", side_effect=fake_run_query):
-        with patch("tracker.main.verify", return_value=VerificationResult(_candidate(), True, "ok")):
+        with patch("tracker.main.verify", return_value=VerificationResult(_candidate(), VERIFIED, "ok")):
             main.run(repo=None, dry_run=True)  # must not raise
 
 
 def test_dry_run_does_not_write_csv_or_seen_state():
     with patch("tracker.main.discover.run_query", return_value=_query_result([_candidate()])):
-        with patch("tracker.main.verify", return_value=VerificationResult(_candidate(), True, "ok")):
+        with patch("tracker.main.verify", return_value=VerificationResult(_candidate(), VERIFIED, "ok")):
             main.run(repo=None, dry_run=True)
 
     assert not (main.DATA_DIR / "discoveries.csv").exists()
@@ -80,7 +80,7 @@ def test_dry_run_does_not_write_csv_or_seen_state():
 
 def test_real_run_writes_csv_and_seen_state():
     with patch("tracker.main.discover.run_query", return_value=_query_result([_candidate()])):
-        with patch("tracker.main.verify", return_value=VerificationResult(_candidate(), True, "ok")):
+        with patch("tracker.main.verify", return_value=VerificationResult(_candidate(), VERIFIED, "ok")):
             main.run(repo=None, dry_run=False)
 
     assert (main.DATA_DIR / "discoveries.csv").exists()
@@ -89,8 +89,38 @@ def test_real_run_writes_csv_and_seen_state():
 
 def test_real_run_creates_digest_issue_only_when_repo_and_accepted_given():
     with patch("tracker.main.discover.run_query", return_value=_query_result([_candidate()])):
-        with patch("tracker.main.verify", return_value=VerificationResult(_candidate(), True, "ok")):
+        with patch("tracker.main.verify", return_value=VerificationResult(_candidate(), VERIFIED, "ok")):
             with patch("tracker.main.emit.create_digest_issue") as mock_digest:
                 main.run(repo="owner/repo", dry_run=False)
 
     mock_digest.assert_called_once()
+
+
+def test_blocked_candidate_is_kept_not_dropped():
+    """A robots.txt/403/timeout block says nothing about whether the event is
+    real, so it must still reach the CSV — just marked as unverified."""
+    with patch("tracker.main.discover.run_query", return_value=_query_result([_candidate()])):
+        with patch(
+            "tracker.main.verify",
+            return_value=VerificationResult(_candidate(), BLOCKED, "could not fetch page: 403"),
+        ):
+            main.run(repo=None, dry_run=False)
+
+    rows = (main.DATA_DIR / "discoveries.csv").read_text()
+    assert "blocked" in rows
+    assert "Test Workshop" in rows
+
+
+def test_rejected_candidate_is_dropped_entirely():
+    """A page that loads but doesn't mention the claimed event is the actual
+    hallucination signal — it must not reach the CSV or the digest issue."""
+    with patch("tracker.main.discover.run_query", return_value=_query_result([_candidate()])):
+        with patch(
+            "tracker.main.verify",
+            return_value=VerificationResult(_candidate(), REJECTED, "event name not found on its own URL"),
+        ):
+            with patch("tracker.main.emit.create_digest_issue") as mock_digest:
+                main.run(repo="owner/repo", dry_run=False)
+
+    assert not (main.DATA_DIR / "discoveries.csv").exists()
+    mock_digest.assert_not_called()

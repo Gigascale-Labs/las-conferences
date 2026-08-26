@@ -31,6 +31,10 @@ CANDIDATE_PROPERTIES = {
     "dates": {"type": "string", "description": "Empty string if not stated in the results."},
     "location": {"type": "string", "description": "Empty string if not stated in the results."},
     "organizer": {"type": "string"},
+    "description": {
+        "type": "string",
+        "description": "One neutral sentence on what the event covers — topic/scope, not why it's relevant or reputable.",
+    },
     "relevance_rationale": {"type": "string"},
     "reputability_rationale": {"type": "string"},
 }
@@ -66,6 +70,7 @@ class Candidate:
     dates: str
     location: str
     organizer: str
+    description: str
     relevance_rationale: str
     reputability_rationale: str
 
@@ -86,10 +91,14 @@ def _prompt(query: str, relevance: str, reputability: str, max_candidates: int) 
         f"From the web search results for this query, list up to {max_candidates} "
         "distinct workshops, conferences, or open CFPs that meet BOTH bars above "
         "— the most relevant and reputable ones first if more than "
-        f"{max_candidates} qualify. Skip anything whose CFP/registration has "
-        "already closed with no future edition mentioned in the results. If "
-        "nothing in the results qualifies, return an empty candidates list "
-        "rather than including a borderline or invented item."
+        f"{max_candidates} qualify. For each, give its dates and location "
+        "exactly as stated in the results (empty string if not stated — do "
+        "not guess), and a one-sentence neutral description of what the "
+        "event covers, separate from why it's relevant or reputable. Skip "
+        "anything whose CFP/registration has already closed with no future "
+        "edition mentioned in the results. If nothing in the results "
+        "qualifies, return an empty candidates list rather than including a "
+        "borderline or invented item."
     )
 
 

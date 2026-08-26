@@ -53,8 +53,15 @@ swapping `model.id` in config never changes how search works. Each request:
   prompt (see `discover._prompt`)
 - constrains the response to a JSON schema (`response_format:
   json_schema`, `strict: true`) listing candidate events: name, url,
-  event_type, dates, location, organizer, relevance_rationale,
-  reputability_rationale — every field required, no free-form prose reply
+  event_type, dates, location, organizer, description,
+  relevance_rationale, reputability_rationale — every field required, no
+  free-form prose reply. `dates`/`location` are the model's transcription of
+  what the search results state, not independently checked — empty string if
+  not stated, and the model is told not to guess them. `description` is a
+  neutral one-sentence summary of what the event covers, distinct from
+  `relevance_rationale` (why it's in scope) and `reputability_rationale` (why
+  its organizer is credible) — kept as three separate fields so a reader can
+  tell "what is this" from "why is it here" from "why should I believe it."
 - instructs the model to return an empty list rather than invent an item to
   fill it
 
@@ -73,38 +80,65 @@ misnamed, every query got an empty bearer token, and the run exited 0 anyway
 
 An LLM web-search call can name a plausible event that does not exist, or get
 its URL wrong. `src/tracker/verify.py` treats every candidate as unverified
-until checked independently of the model's own claim:
+until checked independently of the model's own claim, fetching the
+candidate's URL for real (`tracker.net.fetch` — robots.txt checked first, one
+retry, 20s timeout, identifying UA — same politeness ground rules as v1) and
+comparing its text against tokens from the claimed event name. This produces
+one of three outcomes, not a pass/fail:
 
-1. Fetch the candidate's URL for real (`tracker.net.fetch` — robots.txt
-   checked first, one retry, 20s timeout, identifying UA — same politeness
-   ground rules as v1).
-2. Confirm the page text actually contains tokens from the claimed event name.
-   No match (or an unreachable URL) rejects the candidate — logged in the run
-   summary, not silently dropped.
+- **VERIFIED** — the page loaded and mentions the claimed name. Kept, shown as
+  confirmed.
+- **REJECTED** — the page loaded but does *not* mention the claimed name. This
+  is the actual hallucination signal (wrong URL, or an invented event) and is
+  dropped — logged in the run summary for debugging, never written to
+  `data/discoveries.csv` or the digest issue.
+- **BLOCKED** — the page could not be fetched at all: robots.txt disallow,
+  403, timeout, or a candidate name too short to check meaningfully. This says
+  nothing about whether the event is real, only that this checker can't see
+  the page — a bot-blocking WAF or a disallowed crawler path is exactly as
+  likely on a genuine, reputable event's site as on a fake one. **Kept, not
+  dropped**: written to `data/discoveries.csv` with
+  `verification_status=blocked` and shown in the digest issue under "Possibly
+  relevant — not verified," distinct from the confirmed table, so a reader
+  can manually check the ones automated verification couldn't reach instead
+  of never seeing them. (Earlier version of this pipeline dropped these
+  silently; changed 2026-08-26 after a real run produced 3 blocked candidates
+  — 2 robots.txt-disallowed, 1 an OpenReview PDF returning 403 — that were
+  plausible, on-topic, real-looking events with no way to tell from the
+  reject reason alone that they weren't hallucinations.)
 
-This is a heuristic, not a guarantee: it catches "invented URL" and
-"wrong page" but not "real page, wrong claimed date." Known gap — see section
-9.
+This is still a heuristic, not a guarantee: it catches "invented URL" and
+"wrong page" but not "real page, wrong claimed date," and a BLOCKED item is
+explicitly *not* confirmed — it is flagged as worth a human look, not
+presented as verified. Known gap — see section 9.
 
 ## 6. Dedup
 
 `src/tracker/state.py` keeps a normalized-URL set in `data/seen.json`,
 committed back to the repo each run (Actions runners are ephemeral, same as
-v1). A candidate whose normalized URL was already accepted in a previous run
-is skipped before verification. Within one run, candidates are also deduped by
-normalized URL before verification, since more than one search query can
-surface the same event.
+v1). A candidate whose normalized URL was already kept (VERIFIED or BLOCKED —
+see section 5) in a previous run is skipped before verification runs again.
+Within one run, candidates are also deduped by normalized URL before
+verification, since more than one search query can surface the same event. A
+BLOCKED item is marked seen the same as a VERIFIED one — reported once, not
+re-flagged indefinitely; if a block turns out to be transient, re-checking it
+means removing its URL from `data/seen.json` by hand (README: "Re-detecting an
+item you've already seen").
 
 ## 7. Output
 
-Every accepted candidate (verified + not previously seen) is:
+Every kept candidate — VERIFIED or BLOCKED, not previously seen (section 5) —
+is:
 
 1. Appended to `data/discoveries.csv` (the cumulative log — the primary
-   artifact, same role as v1's `data/venues.csv`).
-2. Included in one weekly digest GitHub issue (`[weekly-scan] N new item(s) —
-   <date>`), titled and skipped entirely when `N == 0` — no issue on an empty
-   week, matching v1's low-noise intent. One issue, not one per item: expected
-   weekly volume is a handful of genuinely new items, not a feed's worth.
+   artifact, same role as v1's `data/venues.csv`), with its
+   `verification_status` in its own column.
+2. Included in one weekly digest GitHub issue (`[weekly-scan] N new item(s), M
+   unverified — <date>`), skipped entirely when nothing was kept — no issue on
+   an empty week, matching v1's low-noise intent. VERIFIED and BLOCKED items
+   get separate tables in the issue body, so a BLOCKED item is never presented
+   as confirmed. One issue, not one per item: expected weekly volume is a
+   handful of genuinely new items, not a feed's worth.
 
 A run summary (query results, rejections with reasons, skip counts) is
 written to `$GITHUB_STEP_SUMMARY`.
@@ -152,8 +186,11 @@ is unverified for any model, Sonnet included.
 ## 9. Non-goals / known gaps
 
 - No headless-browser rendering. If a candidate's page is JS-rendered and
-  `requests.get` sees an empty shell, verification will reject it as a false
-  negative. Not solved in v2 — same non-goal as v1 had for Tier C sources.
+  `requests.get` sees an empty shell, the page still returns 200 with no
+  matching text, so verification marks it REJECTED (not BLOCKED) — a false
+  negative distinct from the robots.txt/403/timeout cases the BLOCKED status
+  now catches (section 5). Not solved in v2 — same non-goal as v1 had for
+  Tier C sources.
 - Verification checks *existence*, not *date accuracy*. A candidate could be a
   real, reputable, on-topic event with a stale or wrong date and still pass.
   Not checked in v2.
@@ -163,6 +200,13 @@ is unverified for any model, Sonnet included.
 - Duplicate-but-differently-worded candidates from two different search
   queries (e.g. the model paraphrases the same event's name two different
   ways with two different URL casings/query-strings that `normalize_url`
-  doesn't collapse) can both pass dedup. Not observed yet since v2 hasn't run;
-  watch `data/discoveries.csv` for this and tighten `normalize_url` if it
-  happens.
+  doesn't collapse) can both pass dedup. Not observed in the first full run
+  (2026-08-26, 32 verified + 3 blocked, no duplicates seen) but that's one
+  small sample, not a guarantee — watch `data/discoveries.csv` over time and
+  tighten `normalize_url` if it happens.
+- A BLOCKED item is marked seen after being flagged once (section 6) — if its
+  block was transient (a temporary WAF rate-limit, a flaky timeout) rather
+  than permanent (a standing robots.txt disallow), it will not be
+  automatically re-attempted on a later run. No automatic retry-after-N-runs
+  exists in v2; manual removal from `data/seen.json` is the only way to
+  re-check one.

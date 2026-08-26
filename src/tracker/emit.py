@@ -10,7 +10,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from tracker.verify import VerificationResult
+from tracker.verify import BLOCKED, VerificationResult
 
 CSV_COLUMNS = [
     "date_found",
@@ -18,17 +18,23 @@ CSV_COLUMNS = [
     "event_type",
     "dates",
     "location",
+    "description",
     "organizer",
     "url",
     "query",
     "relevance_rationale",
     "reputability_rationale",
+    "verification_status",
     "verification_note",
 ]
 
 
-def append_csv(path: Path, accepted: list[VerificationResult]) -> None:
-    if not accepted:
+def append_csv(path: Path, kept: list[VerificationResult]) -> None:
+    """Writes every kept result — both VERIFIED and BLOCKED (SPEC.md section
+    5) — with its status in its own column so a blocked-but-unverified row
+    is distinguishable from a confirmed one without re-reading the reason
+    text."""
+    if not kept:
         return
     is_new = not path.exists()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -37,7 +43,7 @@ def append_csv(path: Path, accepted: list[VerificationResult]) -> None:
         if is_new:
             writer.writeheader()
         today = datetime.now(timezone.utc).date().isoformat()
-        for result in accepted:
+        for result in kept:
             c = result.candidate
             writer.writerow(
                 {
@@ -46,11 +52,13 @@ def append_csv(path: Path, accepted: list[VerificationResult]) -> None:
                     "event_type": c.event_type,
                     "dates": c.dates,
                     "location": c.location,
+                    "description": c.description,
                     "organizer": c.organizer,
                     "url": c.url,
                     "query": c.query,
                     "relevance_rationale": c.relevance_rationale,
                     "reputability_rationale": c.reputability_rationale,
+                    "verification_status": result.status,
                     "verification_note": result.reason,
                 }
             )
@@ -80,28 +88,60 @@ def create_maintenance_issue(title: str, body: str, repo: str) -> bool:
     return True
 
 
-def create_digest_issue(accepted: list[VerificationResult], repo: str) -> None:
-    """One issue per run listing every accepted item (SPEC.md section 7). Only
-    called by main.py when accepted is non-empty — no issue on an empty week.
+def _item_table(results: list[VerificationResult]) -> list[str]:
+    lines = [
+        "| Name | Type | Dates | Location | Description | Organizer | Link |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for result in results:
+        c = result.candidate
+        lines.append(
+            f"| {c.name} | {c.event_type} | {c.dates} | {c.location} | {c.description} "
+            f"| {c.organizer} | {c.url} |"
+        )
+    return lines
+
+
+def create_digest_issue(kept: list[VerificationResult], repo: str) -> None:
+    """One issue per run listing every kept item (SPEC.md section 7). Only
+    called by main.py when kept is non-empty — no issue on an empty week.
+    VERIFIED and BLOCKED results (SPEC.md section 5) get separate tables:
+    a BLOCKED item's page couldn't be fetched to confirm it, so it's flagged
+    as possibly relevant rather than presented as confirmed.
     """
     today = datetime.now(timezone.utc).date().isoformat()
-    lines = [
-        f"{len(accepted)} new item(s) passed relevance, reputability, and URL "
-        "verification this run.",
-        "",
-        "| Name | Type | Dates | Organizer | Link |",
-        "|---|---|---|---|---|",
-    ]
-    for result in accepted:
-        c = result.candidate
-        lines.append(f"| {c.name} | {c.event_type} | {c.dates} | {c.organizer} | {c.url} |")
+    verified = [r for r in kept if r.status != BLOCKED]
+    blocked = [r for r in kept if r.status == BLOCKED]
 
-    lines.append("")
+    lines = [
+        f"{len(verified)} new item(s) passed relevance, reputability, and URL "
+        f"verification this run; {len(blocked)} more matched relevance and "
+        "reputability but could not be independently verified (see below).",
+        "",
+    ]
+    if verified:
+        lines.append("### Verified")
+        lines.append("")
+        lines.extend(_item_table(verified))
+        lines.append("")
+    if blocked:
+        lines.append("### Possibly relevant — not verified (page fetch was blocked)")
+        lines.append("")
+        lines.append(
+            "These matched the relevance/reputability bars, but their URL "
+            "could not be fetched to confirm the event actually exists as "
+            "described (robots.txt disallow, 403, timeout, or similar) — "
+            "check manually before treating them as confirmed."
+        )
+        lines.append("")
+        lines.extend(_item_table(blocked))
+        lines.append("")
+
     lines.append("<details><summary>Rationale per item</summary>")
     lines.append("")
-    for result in accepted:
+    for result in kept:
         c = result.candidate
-        lines.append(f"**{c.name}**")
+        lines.append(f"**{c.name}**" + (" _(unverified — blocked)_" if result.status == BLOCKED else ""))
         lines.append(f"- Relevance: {c.relevance_rationale}")
         lines.append(f"- Reputability: {c.reputability_rationale}")
         lines.append(f"- Verification: {result.reason}")
@@ -110,7 +150,7 @@ def create_digest_issue(accepted: list[VerificationResult], repo: str) -> None:
 
     _gh(
         "issue", "create", "--repo", repo,
-        "--title", f"[weekly-scan] {len(accepted)} new item(s) — {today}",
+        "--title", f"[weekly-scan] {len(verified)} new item(s), {len(blocked)} unverified — {today}",
         "--body", "\n".join(lines),
         "--label", "cfp",
     )
@@ -132,6 +172,9 @@ class RunSummary:
 
     def candidate_rejected(self, candidate, reason: str) -> None:
         self.lines.append(f"  - rejected `{candidate.name}` ({candidate.url}): {reason}")
+
+    def candidate_blocked(self, candidate, reason: str) -> None:
+        self.lines.append(f"  - kept but UNVERIFIED `{candidate.name}` ({candidate.url}): {reason}")
 
     def candidate_accepted(self, candidate) -> None:
         self.lines.append(f"  - accepted `{candidate.name}` ({candidate.url})")

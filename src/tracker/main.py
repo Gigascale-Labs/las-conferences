@@ -14,7 +14,7 @@ from tracker import discover, emit
 from tracker.discover import DiscoveryError
 from tracker.net import RobotsCache, build_user_agent
 from tracker.state import SeenStore, normalize_url
-from tracker.verify import verify
+from tracker.verify import BLOCKED, REJECTED, verify
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = ROOT / "config" / "scope.yaml"
@@ -104,33 +104,45 @@ def run(repo: str | None = None, dry_run: bool = False) -> None:
         summary.write()
         sys.exit(1)
 
-    accepted = []
+    # A candidate that fails verification splits two ways (SPEC.md section
+    # 5): REJECTED (page loads, doesn't mention the claimed event — a real
+    # hallucination signal) is dropped. BLOCKED (page couldn't be fetched at
+    # all — robots.txt, 403, timeout) says nothing about whether the event is
+    # real, so it's kept and flagged rather than dropped.
+    kept = []
     for candidate in _dedupe_within_run(all_candidates):
         if seen.is_seen(candidate.url):
             summary.candidate_skipped(candidate, "already reported in a previous run")
             continue
 
         result = verify(candidate, user_agent=user_agent, robots=robots)
-        if not result.verified:
+        if result.status == REJECTED:
             summary.candidate_rejected(candidate, result.reason)
             continue
 
-        summary.candidate_accepted(candidate)
-        accepted.append(result)
+        if result.status == BLOCKED:
+            summary.candidate_blocked(candidate, result.reason)
+        else:
+            summary.candidate_accepted(candidate)
+        kept.append(result)
         seen.mark_seen(candidate.url)
 
     if dry_run:
-        if accepted:
-            summary.lines.append(f"- would append {len(accepted)} row(s) to data/discoveries.csv")
-            summary.lines.append(f"- would open digest issue: [weekly-scan] {len(accepted)} new item(s)")
+        if kept:
+            verified_count = sum(1 for r in kept if r.status != BLOCKED)
+            summary.lines.append(f"- would append {len(kept)} row(s) to data/discoveries.csv")
+            summary.lines.append(
+                f"- would open digest issue: [weekly-scan] {verified_count} new item(s), "
+                f"{len(kept) - verified_count} unverified"
+            )
         summary.write()
         return
 
-    emit.append_csv(DATA_DIR / "discoveries.csv", accepted)
+    emit.append_csv(DATA_DIR / "discoveries.csv", kept)
 
-    if repo and accepted:
+    if repo and kept:
         try:
-            emit.create_digest_issue(accepted, repo)
+            emit.create_digest_issue(kept, repo)
         except Exception as exc:  # noqa: BLE001 - a failed issue post must not lose the CSV write above
             summary.lines.append(f"- digest issue creation failed: {exc}")
 

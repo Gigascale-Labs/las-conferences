@@ -34,6 +34,7 @@ def test_parses_candidates_from_response():
         "dates": "2027-05-10",
         "location": "Auckland",
         "organizer": "IFAAMAS",
+        "description": "A workshop on mechanism design for economies of AI agents.",
         "relevance_rationale": "Studies mechanism design for large agent populations.",
         "reputability_rationale": "Affiliated with the AAMAS conference series.",
     }
