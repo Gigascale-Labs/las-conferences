@@ -4,6 +4,7 @@ summary.
 from __future__ import annotations
 
 import csv
+import json
 import os
 import subprocess
 from datetime import datetime, timezone
@@ -58,6 +59,25 @@ def append_csv(path: Path, accepted: list[VerificationResult]) -> None:
 def _gh(*args: str) -> str:
     result = subprocess.run(["gh", *args], capture_output=True, text=True, check=True)
     return result.stdout
+
+
+def create_maintenance_issue(title: str, body: str, repo: str) -> bool:
+    """A tracker-maintenance issue, deduped by exact open-title match so a
+    still-broken run doesn't open a new issue every week."""
+    try:
+        existing = json.loads(
+            _gh("issue", "list", "--repo", repo, "--state", "open", "--search", title, "--json", "title")
+        )
+    except (subprocess.CalledProcessError, json.JSONDecodeError):
+        existing = []
+    if any(item.get("title") == title for item in existing):
+        return False
+
+    _gh(
+        "issue", "create", "--repo", repo,
+        "--title", title, "--body", body, "--label", "tracker-maintenance",
+    )
+    return True
 
 
 def create_digest_issue(accepted: list[VerificationResult], repo: str) -> None:
@@ -116,10 +136,9 @@ class RunSummary:
         self.lines.append(f"  - accepted `{candidate.name}` ({candidate.url})")
 
     def write(self, path: str | None = None) -> None:
-        path = path or os.environ.get("GITHUB_STEP_SUMMARY")
         text = "\n".join(self.lines) + "\n"
-        if not path:
-            print(text)
-            return
-        with open(path, "a") as f:
-            f.write(text)
+        print(text)  # always visible in the plain step log, not just the job summary panel
+        path = path or os.environ.get("GITHUB_STEP_SUMMARY")
+        if path:
+            with open(path, "a") as f:
+                f.write(text)

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from pathlib import Path
 
 import yaml
@@ -52,8 +53,10 @@ def run(repo: str | None = None, dry_run: bool = False) -> None:
             "issue below are NOT written. This is what would have happened."
         )
 
+    queries = search_cfg["queries"]
     all_candidates: list[discover.Candidate] = []
-    for query in search_cfg["queries"]:
+    failures: list[str] = []
+    for query in queries:
         try:
             candidates = discover.run_query(
                 query,
@@ -66,9 +69,29 @@ def run(repo: str | None = None, dry_run: bool = False) -> None:
             )
         except DiscoveryError as exc:
             summary.query_failed(query, str(exc))
+            failures.append(str(exc))
             continue
         summary.query_ok(query, len(candidates))
         all_candidates.extend(candidates)
+
+    # One bad query is tolerated (ground rule: a single flaky query must never
+    # fail the whole run) but every query failing is a systemic problem (e.g.
+    # a bad/missing OPENROUTER_API_KEY) that looks identical to "quiet week,
+    # nothing new" unless flagged loudly here.
+    if queries and len(failures) == len(queries):
+        message = f"all {len(queries)} search queries failed this run — first error: {failures[0]}"
+        summary.lines.append(f"**SYSTEMIC FAILURE**: {message}")
+        if not dry_run and repo:
+            try:
+                emit.create_maintenance_issue(
+                    "[tracker] all search queries failed",
+                    f"{message}\n\nCheck OPENROUTER_API_KEY is set and valid.",
+                    repo,
+                )
+            except Exception as exc:  # noqa: BLE001 - don't lose the summary write below over this
+                summary.lines.append(f"- maintenance issue creation failed: {exc}")
+        summary.write()
+        sys.exit(1)
 
     accepted = []
     for candidate in _dedupe_within_run(all_candidates):

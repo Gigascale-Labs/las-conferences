@@ -59,7 +59,15 @@ swapping `model.id` in config never changes how search works. Each request:
   fill it
 
 One query failing (timeout, malformed JSON, HTTP error) is logged and skipped;
-it must never fail the whole run (same ground rule as v1).
+it must never fail the whole run (same ground rule as v1). But *every* query
+failing in the same run is treated differently: that pattern means something
+systemic broke (a bad/missing `OPENROUTER_API_KEY`, OpenRouter itself down),
+and left unflagged would look identical to a legitimate quiet week. `main.py`
+detects the all-failed case, exits non-zero, and (outside `dry_run`) opens a
+`[tracker] all search queries failed` maintenance issue, deduped by title.
+Found live during initial testing (2026-08-26): the workflow's secret was
+misnamed, every query got an empty bearer token, and the run exited 0 anyway
+— exactly the failure mode this check now catches.
 
 ## 5. Verification (anti-hallucination)
 

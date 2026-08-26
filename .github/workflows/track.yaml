@@ -42,7 +42,10 @@ jobs:
 
       - name: Run tracker
         env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          # Secret is named LAS_CONFERENCES_26AUG in this repo's Settings, not
+          # OPENROUTER_API_KEY — rename it there for clarity if convenient,
+          # then flip this back to secrets.OPENROUTER_API_KEY.
+          OPENROUTER_API_KEY: ${{ secrets.LAS_CONFERENCES_26AUG }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
