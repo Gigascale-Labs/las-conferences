@@ -8,16 +8,15 @@ meta:
   maintainer_email: "stephen.elliott231@gmail.com"
 
 model:
-  # OpenRouter model slug. Cost at weekly cadence SHOULD be dominated by the
-  # flat per-search-call fee (~$0.007/call, Exa auto mode — see
-  # discover.WEB_PLUGIN_ENGINE), not token price, making this swappable
-  # without re-pricing the whole pipeline. That estimate held only once the
-  # `web` plugin was explicitly pinned to the Exa engine (2026-08-26 fix) —
-  # left unset it silently uses each provider's own native search tool
-  # instead, which for Anthropic is agentic and was ~10-100x costlier in a
-  # real (if small, n=2) test. Check the per-query cost logged in the run
-  # summary (SPEC.md section 8) before trusting any estimate here, including
-  # this one.
+  # OpenRouter model slug. Measured 2026-08-26 (10 real queries, Sonnet 5,
+  # `web` plugin pinned to engine: "exa"): mean $0.0571/query, of which only
+  # ~$0.007 (12%) is the flat Exa search fee — the rest is this model's own
+  # token cost. So model choice does move cost noticeably; a cheaper model
+  # (e.g. openai/gpt-oss-120b, ~55-270x cheaper per token on OpenRouter)
+  # would likely cut it further. Not yet tried — quality on this specific
+  # task (structured-output reliability, reputability judgment) is unverified
+  # for any model, Sonnet included. See SPEC.md section 8 for the full
+  # numbers and the run summary for live per-query cost on every run.
   id: "anthropic/claude-sonnet-5"
   # 4000 was the original guess and was observed 2026-08-26 to truncate
   # mid-JSON on a broad query with many real matches (finish_reason: length).

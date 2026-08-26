@@ -128,11 +128,26 @@ breakdown was captured at the time, so the exact split isn't known, but it is
 Fix: `discover.py` now pins `plugins: [{"id": "web", "engine": "exa", ...}]`
 explicitly (`WEB_PLUGIN_ENGINE`), restoring one bounded, non-agentic search
 per query at Exa's flat ~$0.007 (auto mode, up to 10 results) regardless of
-which model is configured — this is what makes the model choice barely
-matter, not the unpinned default. `discover.run_query` also now returns
+which model is configured. `discover.run_query` also now returns
 `usage.cost`/`prompt_tokens`/`completion_tokens` from OpenRouter's response,
 logged per-query and summed per-run in the run summary, so actual spend is
 observed on every run going forward rather than assumed.
+
+Measured after the fix (first full real run, 2026-08-26, 10 queries against
+`anthropic/claude-sonnet-5`, n=10 per-query costs): $0.0431–$0.0710, mean
+$0.0571, total $0.5713 for the run. ~17x cheaper than the ~$1/query estimated
+from the pre-fix $2/2-query spend, but still ~8x the $0.007 flat search fee —
+the rest is Sonnet's own token cost (candidate lists with two rationale
+sentences each, at Sonnet's $10/M output price). At 52 runs/year: ~$29.70/year
+for search this size. **Correction to the original claim in this section**:
+model choice does NOT barely move cost once the search fee is pinned and
+small relative to token cost, as it appeared to when the flat fee was assumed
+to dominate — Sonnet's per-token price is the majority of the per-query cost
+here. A cheaper model (e.g. `openai/gpt-oss-120b`, ~55-270x cheaper per
+token — see the conversation that produced this spec for the OpenRouter
+pricing pull) would very likely cut this further; not yet tried, and quality
+on this specific task (structured-output reliability, reputability judgment)
+is unverified for any model, Sonnet included.
 
 ## 9. Non-goals / known gaps
 
