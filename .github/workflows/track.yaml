@@ -4,7 +4,16 @@ on:
   schedule:
     # Monday 20:00 UTC ≈ Tuesday morning AEST. GitHub Actions cron is UTC only.
     - cron: "0 20 * * 1"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: >-
+          Run discovery + verification but skip committing data/ and creating
+          a GitHub issue. Defaults on so manual test runs (e.g. from a dev
+          branch) never touch committed data or the shared issue tracker.
+          Uncheck to let a manual run write for real.
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -32,27 +41,35 @@ jobs:
         run: pip install -e .
 
       - name: Run tracker
+        id: run
         env:
+          # Secret is named LAS_CONFERENCES_26AUG in this repo's Settings, not
+          # OPENROUTER_API_KEY — rename it there for clarity if convenient,
+          # then flip this back to secrets.OPENROUTER_API_KEY.
+          OPENROUTER_API_KEY: ${{ secrets.LAS_CONFERENCES_26AUG }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          DRY_RUN: ${{ github.event.inputs.dry_run == 'true' }}
         run: python -m tracker.main
 
       - name: Commit data changes
         id: commit
+        if: github.event.inputs.dry_run != 'true'
         run: |
           git config user.name "las-venue-tracker[bot]"
           git config user.email "actions@github.com"
           # `git add` first: plain `git diff` is blind to brand-new untracked
-          # files (e.g. data/seen.json / data/venues.csv on the very first run),
-          # so checking the *staged* diff is what actually detects "changed".
-          git add data
-          if git diff --cached --quiet -- data; then
+          # files (e.g. data/seen.json / data/discoveries.db / docs/events.json
+          # on the very first run), so checking the *staged* diff is what
+          # actually detects "changed". discoveries.db is SQLite (binary), so
+          # the item count comes from the run step's own output, not a numstat
+          # diff — see main.py's _write_github_output.
+          git add data docs
+          if git diff --cached --quiet -- data docs; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
-            new_rows=$(git diff --cached --numstat -- data/venues.csv | awk '{print $1}')
-            page_changes=$(git diff --cached --name-only -- data/snapshots | wc -l | tr -d ' ')
-            git commit -m "track: ${new_rows:-0} new items, ${page_changes} page changes — $(date -u +%Y-%m-%d)"
+            git commit -m "track: ${{ steps.run.outputs.new_items || '0' }} new items — $(date -u +%Y-%m-%d)"
             git push
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi

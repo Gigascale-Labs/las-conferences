@@ -1,73 +1,14 @@
-"""Outputs (spec section 6): CSV append, GitHub issue creation, run summary."""
+"""Outputs (SPEC.md section 7): one weekly digest GitHub issue, run summary.
+The persistent event log itself lives in tracker.db / tracker.feed.
+"""
 from __future__ import annotations
 
-import csv
 import json
 import os
 import subprocess
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 
-CSV_COLUMNS = [
-    "date_seen",
-    "source_id",
-    "tier",
-    "title",
-    "url",
-    "matched_topics",
-    "priority",
-    "published_date",
-    "notes",
-]
-
-ISSUE_LABELS = {
-    "cfp": "d73a4a",
-    "tracker-maintenance": "ededed",
-    "multi_agent": "0e8a16",
-    "digital_twin": "1d76db",
-    "comp_econ": "fbca04",
-    "css": "5319e7",
-    "llm_evals": "b60205",
-}
-
-
-@dataclass
-class Finding:
-    source_id: str
-    tier: str
-    title: str
-    url: str
-    matched_topics: list[str] = field(default_factory=list)
-    priority: str = "normal"
-    published_date: str = ""
-    notes: str = ""
-
-
-def append_csv(path: Path, findings: list[Finding]) -> None:
-    if not findings:
-        return
-    is_new = not path.exists()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-        if is_new:
-            writer.writeheader()
-        today = datetime.now(timezone.utc).date().isoformat()
-        for finding in findings:
-            writer.writerow(
-                {
-                    "date_seen": today,
-                    "source_id": finding.source_id,
-                    "tier": finding.tier,
-                    "title": finding.title,
-                    "url": finding.url,
-                    "matched_topics": ";".join(finding.matched_topics),
-                    "priority": finding.priority,
-                    "published_date": finding.published_date,
-                    "notes": finding.notes,
-                }
-            )
+from tracker.verify import BLOCKED, VerificationResult
 
 
 def _gh(*args: str) -> str:
@@ -75,64 +16,17 @@ def _gh(*args: str) -> str:
     return result.stdout
 
 
-def ensure_labels(repo: str) -> None:
-    try:
-        existing = {item["name"] for item in json.loads(_gh("label", "list", "--repo", repo, "--json", "name"))}
-    except (subprocess.CalledProcessError, json.JSONDecodeError):
-        return
-    for name, color in ISSUE_LABELS.items():
-        if name in existing:
-            continue
-        try:
-            _gh("label", "create", name, "--repo", repo, "--color", color)
-        except subprocess.CalledProcessError:
-            pass  # non-fatal: issue creation still works without a custom color
-
-
-def _open_issue_bodies_matching(search: str, repo: str) -> list[dict]:
-    out = _gh(
-        "issue", "list", "--repo", repo, "--state", "open",
-        "--search", search, "--json", "title,body",
-    )
-    return json.loads(out)
-
-
-def create_cfp_issue(finding: Finding, repo: str) -> bool:
-    """Create a [CFP] issue for a high-priority finding, deduped by URL. Returns
-    True if an issue was created, False if one already existed for this URL."""
-    try:
-        if any(finding.url in (item.get("body") or "") for item in _open_issue_bodies_matching(finding.url, repo)):
-            return False
-    except (subprocess.CalledProcessError, json.JSONDecodeError):
-        pass  # search failed open: proceed to create rather than silently drop the finding
-
-    body_lines = [
-        f"**Link:** {finding.url}",
-        f"**Source:** {finding.source_id} (tier {finding.tier})",
-        f"**Matched topics:** {', '.join(finding.matched_topics)}",
-    ]
-    if finding.published_date:
-        body_lines.append(f"**Published:** {finding.published_date}")
-    if finding.notes:
-        body_lines.append(f"**Notes:** {finding.notes}")
-
-    labels = ["cfp"] + [t for t in finding.matched_topics if t in ISSUE_LABELS]
-    _gh(
-        "issue", "create", "--repo", repo,
-        "--title", f"[CFP] {finding.title}",
-        "--body", "\n".join(body_lines),
-        "--label", ",".join(labels),
-    )
-    return True
-
-
 def create_maintenance_issue(title: str, body: str, repo: str) -> bool:
-    """Create a tracker-maintenance issue, deduped by exact title match."""
+    """A tracker-maintenance issue, deduped by exact open-title match so a
+    still-broken run doesn't open a new issue every week."""
     try:
-        if any(item.get("title") == title for item in _open_issue_bodies_matching(title, repo)):
-            return False
+        existing = json.loads(
+            _gh("issue", "list", "--repo", repo, "--state", "open", "--search", title, "--json", "title")
+        )
     except (subprocess.CalledProcessError, json.JSONDecodeError):
-        pass
+        existing = []
+    if any(item.get("title") == title for item in existing):
+        return False
 
     _gh(
         "issue", "create", "--repo", repo,
@@ -141,30 +35,101 @@ def create_maintenance_issue(title: str, body: str, repo: str) -> bool:
     return True
 
 
+def _item_table(results: list[VerificationResult]) -> list[str]:
+    lines = [
+        "| Name | Type | Dates | Location | Description | Organizer | Link |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for result in results:
+        c = result.candidate
+        lines.append(
+            f"| {c.name} | {c.event_type} | {c.dates} | {c.location} | {c.description} "
+            f"| {c.organizer} | {c.url} |"
+        )
+    return lines
+
+
+def create_digest_issue(kept: list[VerificationResult], repo: str) -> None:
+    """One issue per run listing every kept item (SPEC.md section 7). Only
+    called by main.py when kept is non-empty — no issue on an empty week.
+    VERIFIED and BLOCKED results (SPEC.md section 5) get separate tables:
+    a BLOCKED item's page couldn't be fetched to confirm it, so it's flagged
+    as possibly relevant rather than presented as confirmed.
+    """
+    today = datetime.now(timezone.utc).date().isoformat()
+    verified = [r for r in kept if r.status != BLOCKED]
+    blocked = [r for r in kept if r.status == BLOCKED]
+
+    lines = [
+        f"{len(verified)} new item(s) passed relevance, reputability, and URL "
+        f"verification this run; {len(blocked)} more matched relevance and "
+        "reputability but could not be independently verified (see below).",
+        "",
+    ]
+    if verified:
+        lines.append("### Verified")
+        lines.append("")
+        lines.extend(_item_table(verified))
+        lines.append("")
+    if blocked:
+        lines.append("### Possibly relevant — not verified (page fetch was blocked)")
+        lines.append("")
+        lines.append(
+            "These matched the relevance/reputability bars, but their URL "
+            "could not be fetched to confirm the event actually exists as "
+            "described (robots.txt disallow, 403, timeout, or similar) — "
+            "check manually before treating them as confirmed."
+        )
+        lines.append("")
+        lines.extend(_item_table(blocked))
+        lines.append("")
+
+    lines.append("<details><summary>Rationale per item</summary>")
+    lines.append("")
+    for result in kept:
+        c = result.candidate
+        lines.append(f"**{c.name}**" + (" _(unverified — blocked)_" if result.status == BLOCKED else ""))
+        lines.append(f"- Relevance: {c.relevance_rationale}")
+        lines.append(f"- Reputability: {c.reputability_rationale}")
+        lines.append(f"- Verification: {result.reason}")
+        lines.append("")
+    lines.append("</details>")
+
+    _gh(
+        "issue", "create", "--repo", repo,
+        "--title", f"[weekly-scan] {len(verified)} new item(s), {len(blocked)} unverified — {today}",
+        "--body", "\n".join(lines),
+        "--label", "cfp",
+    )
+
+
 class RunSummary:
     def __init__(self):
-        self.lines: list[str] = ["# LAS Venue Tracker — run summary", ""]
+        self.lines: list[str] = ["# LAS venue tracker — run summary", ""]
 
-    def source_ok(self, source_id: str, new_items: int, relevant_items: int) -> None:
-        self.lines.append(f"- `{source_id}`: {new_items} new item(s), {relevant_items} relevant")
+    def query_ok(self, query: str, candidate_count: int, cost_usd: float | None = None) -> None:
+        cost_note = f", ${cost_usd:.4f}" if cost_usd is not None else ", cost unknown"
+        self.lines.append(f"- query `{query}`: {candidate_count} candidate(s){cost_note}")
 
-    def source_not_modified(self, source_id: str) -> None:
-        self.lines.append(f"- `{source_id}`: not modified (304)")
+    def query_failed(self, query: str, error: str) -> None:
+        self.lines.append(f"- query `{query}`: **FAILED** — {error}")
 
-    def source_no_change(self, source_id: str) -> None:
-        self.lines.append(f"- `{source_id}`: no change")
+    def candidate_skipped(self, candidate, reason: str) -> None:
+        self.lines.append(f"  - skipped `{candidate.name}` ({candidate.url}): {reason}")
 
-    def source_failed(self, source_id: str, error: str) -> None:
-        self.lines.append(f"- `{source_id}`: **FAILED** — {error}")
+    def candidate_rejected(self, candidate, reason: str) -> None:
+        self.lines.append(f"  - rejected `{candidate.name}` ({candidate.url}): {reason}")
 
-    def source_disabled(self, source_id: str) -> None:
-        self.lines.append(f"- `{source_id}`: disabled, skipped")
+    def candidate_blocked(self, candidate, reason: str) -> None:
+        self.lines.append(f"  - kept but UNVERIFIED `{candidate.name}` ({candidate.url}): {reason}")
+
+    def candidate_accepted(self, candidate) -> None:
+        self.lines.append(f"  - accepted `{candidate.name}` ({candidate.url})")
 
     def write(self, path: str | None = None) -> None:
-        path = path or os.environ.get("GITHUB_STEP_SUMMARY")
         text = "\n".join(self.lines) + "\n"
-        if not path:
-            print(text)
-            return
-        with open(path, "a") as f:
-            f.write(text)
+        print(text)  # always visible in the plain step log, not just the job summary panel
+        path = path or os.environ.get("GITHUB_STEP_SUMMARY")
+        if path:
+            with open(path, "a") as f:
+                f.write(text)
