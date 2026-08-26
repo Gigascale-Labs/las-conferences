@@ -10,8 +10,10 @@ relevance/reputability judgment; deterministic code only verifies and dedupes.
 
 Once a week, find new, reputable workshops, conferences, and CFPs relevant to
 the research scope of <https://www.largeagentsystems.org>, and log/notify on
-the ones that pass verification. Runs on GitHub Actions — no server, no
-database beyond files committed back to this repo.
+the ones that pass verification. Runs on GitHub Actions — no server; the only
+"database" is a SQLite file committed back to this repo (section 7). Findings
+are also published as a public JSON feed for largeagentsystems.org (or
+anything else) to consume (section 7a).
 
 ## 2. Relevance scope
 
@@ -91,13 +93,13 @@ one of three outcomes, not a pass/fail:
 - **REJECTED** — the page loaded but does *not* mention the claimed name. This
   is the actual hallucination signal (wrong URL, or an invented event) and is
   dropped — logged in the run summary for debugging, never written to
-  `data/discoveries.csv` or the digest issue.
+  `data/discoveries.db` or the digest issue.
 - **BLOCKED** — the page could not be fetched at all: robots.txt disallow,
   403, timeout, or a candidate name too short to check meaningfully. This says
   nothing about whether the event is real, only that this checker can't see
   the page — a bot-blocking WAF or a disallowed crawler path is exactly as
   likely on a genuine, reputable event's site as on a fake one. **Kept, not
-  dropped**: written to `data/discoveries.csv` with
+  dropped**: written to `data/discoveries.db` with
   `verification_status=blocked` and shown in the digest issue under "Possibly
   relevant — not verified," distinct from the confirmed table, so a reader
   can manually check the ones automated verification couldn't reach instead
@@ -130,9 +132,14 @@ item you've already seen").
 Every kept candidate — VERIFIED or BLOCKED, not previously seen (section 5) —
 is:
 
-1. Appended to `data/discoveries.csv` (the cumulative log — the primary
-   artifact, same role as v1's `data/venues.csv`), with its
-   `verification_status` in its own column.
+1. Inserted into `data/discoveries.db` (`src/tracker/db.py`), a SQLite file
+   committed back to the repo each run — the cumulative primary artifact,
+   same role as v1's `data/venues.csv`. Insert-only, one row per event, never
+   updated: `id` (a `uuid4`, assigned at insert — this is what "each item
+   scraped gets a uuid" means concretely), `date_scraped` (UTC date the row
+   was inserted, immutable after that), plus every `Candidate` field
+   (name/dates/location/description/organizer/url/query/rationales) and
+   `verification_status`/`verification_note` from section 5.
 2. Included in one weekly digest GitHub issue (`[weekly-scan] N new item(s), M
    unverified — <date>`), skipped entirely when nothing was kept — no issue on
    an empty week, matching v1's low-noise intent. VERIFIED and BLOCKED items
@@ -142,6 +149,53 @@ is:
 
 A run summary (query results, rejections with reasons, skip counts) is
 written to `$GITHUB_STEP_SUMMARY`.
+
+**SQLite-in-git tradeoff, accepted deliberately (2026-08-26)**: a SQLite file
+doesn't diff or delta-compress the way an append-only CSV does — every commit
+stores something closer to a full rewrite of the changed pages, so repo size
+grows faster per row than the CSV did. Chosen anyway over a hosted DB because
+it needs no new infra/secret/cost and stays inside the existing "commit state
+back to the repo" pattern; revisit if `data/discoveries.db` size becomes
+noticeable (`du -h data/discoveries.db` — no threshold picked yet for
+"noticeable").
+
+## 7a. Public feed and website
+
+`src/tracker/feed.py` regenerates `docs/events.json` from the *entire*
+`data/discoveries.db` table (not just this run's new rows) every real run, so
+it always reflects the cumulative current state, and is committed alongside
+`data/` in the same workflow step. Shape:
+
+```json
+{
+  "generated_at": "<ISO 8601 UTC timestamp of this run>",
+  "count": <int>,
+  "events": [ {"id": ..., "date_scraped": ..., "name": ..., ...all db.py columns... } ]
+}
+```
+
+This repo was made **public** on 2026-08-26 specifically so this feed has a
+stable public URL — GitHub Pages cannot serve a private repo's contents
+without GitHub Enterprise, which this org does not have confirmed. Checked
+before flipping visibility: full working tree and `git log --all -p` (every
+branch) for secret-shaped strings — none found beyond a test fixture's literal
+`"test-key"`. `config/scope.yaml`'s `meta.maintainer_email` is a real personal
+address and is now public as a side effect; flagged to the user, not yet
+changed.
+
+The feed includes *all* kept events regardless of `verification_status` —
+deciding whether to display a `blocked` item is left to whatever consumes the
+feed, not filtered out here (section 5's "don't silently drop a BLOCKED item"
+reasoning applies to the public feed too). A consumer wanting only confirmed
+events should filter on `verification_status == "verified"` itself.
+
+**Integration with the actual largeagentsystems.org site is not done here.**
+This repo publishes the feed; wiring the live site to fetch and render it is
+a change in that site's own codebase, which this repo has no access to.
+GitHub Pages itself also isn't enabled yet as of this writing — needs `docs/`
+to exist on a real branch first (chicken-and-egg with the first real run),
+and a one-time `gh api repos/{owner}/{repo}/pages` call pointing at the branch
+that has it.
 
 ## 8. Cost and secrets
 
@@ -202,7 +256,7 @@ is unverified for any model, Sonnet included.
   ways with two different URL casings/query-strings that `normalize_url`
   doesn't collapse) can both pass dedup. Not observed in the first full run
   (2026-08-26, 32 verified + 3 blocked, no duplicates seen) but that's one
-  small sample, not a guarantee — watch `data/discoveries.csv` over time and
+  small sample, not a guarantee — watch `data/discoveries.db` over time and
   tighten `normalize_url` if it happens.
 - A BLOCKED item is marked seen after being flagged once (section 6) — if its
   block was transient (a temporary WAF rate-limit, a flaky timeout) rather

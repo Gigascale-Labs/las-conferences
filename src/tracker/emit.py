@@ -1,67 +1,14 @@
-"""Outputs (SPEC.md section 7): CSV append, one weekly digest GitHub issue, run
-summary.
+"""Outputs (SPEC.md section 7): one weekly digest GitHub issue, run summary.
+The persistent event log itself lives in tracker.db / tracker.feed.
 """
 from __future__ import annotations
 
-import csv
 import json
 import os
 import subprocess
 from datetime import datetime, timezone
-from pathlib import Path
 
 from tracker.verify import BLOCKED, VerificationResult
-
-CSV_COLUMNS = [
-    "date_found",
-    "name",
-    "event_type",
-    "dates",
-    "location",
-    "description",
-    "organizer",
-    "url",
-    "query",
-    "relevance_rationale",
-    "reputability_rationale",
-    "verification_status",
-    "verification_note",
-]
-
-
-def append_csv(path: Path, kept: list[VerificationResult]) -> None:
-    """Writes every kept result — both VERIFIED and BLOCKED (SPEC.md section
-    5) — with its status in its own column so a blocked-but-unverified row
-    is distinguishable from a confirmed one without re-reading the reason
-    text."""
-    if not kept:
-        return
-    is_new = not path.exists()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-        if is_new:
-            writer.writeheader()
-        today = datetime.now(timezone.utc).date().isoformat()
-        for result in kept:
-            c = result.candidate
-            writer.writerow(
-                {
-                    "date_found": today,
-                    "name": c.name,
-                    "event_type": c.event_type,
-                    "dates": c.dates,
-                    "location": c.location,
-                    "description": c.description,
-                    "organizer": c.organizer,
-                    "url": c.url,
-                    "query": c.query,
-                    "relevance_rationale": c.relevance_rationale,
-                    "reputability_rationale": c.reputability_rationale,
-                    "verification_status": result.status,
-                    "verification_note": result.reason,
-                }
-            )
 
 
 def _gh(*args: str) -> str:

@@ -41,6 +41,7 @@ jobs:
         run: pip install -e .
 
       - name: Run tracker
+        id: run
         env:
           # Secret is named LAS_CONFERENCES_26AUG in this repo's Settings, not
           # OPENROUTER_API_KEY — rename it there for clarity if convenient,
@@ -59,15 +60,16 @@ jobs:
           git config user.name "las-venue-tracker[bot]"
           git config user.email "actions@github.com"
           # `git add` first: plain `git diff` is blind to brand-new untracked
-          # files (e.g. data/seen.json / data/discoveries.csv on the very
-          # first run), so checking the *staged* diff is what actually
-          # detects "changed".
-          git add data
-          if git diff --cached --quiet -- data; then
+          # files (e.g. data/seen.json / data/discoveries.db / docs/events.json
+          # on the very first run), so checking the *staged* diff is what
+          # actually detects "changed". discoveries.db is SQLite (binary), so
+          # the item count comes from the run step's own output, not a numstat
+          # diff — see main.py's _write_github_output.
+          git add data docs
+          if git diff --cached --quiet -- data docs; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
-            new_rows=$(git diff --cached --numstat -- data/discoveries.csv | awk '{print $1}')
-            git commit -m "track: ${new_rows:-0} new items — $(date -u +%Y-%m-%d)"
+            git commit -m "track: ${{ steps.run.outputs.new_items || '0' }} new items — $(date -u +%Y-%m-%d)"
             git push
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi

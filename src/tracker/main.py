@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-from tracker import discover, emit
+from tracker import db, discover, emit, feed
 from tracker.discover import DiscoveryError
 from tracker.net import RobotsCache, build_user_agent
 from tracker.state import SeenStore, normalize_url
@@ -19,6 +19,7 @@ from tracker.verify import BLOCKED, REJECTED, verify
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = ROOT / "config" / "scope.yaml"
 DATA_DIR = ROOT / "data"
+DOCS_DIR = ROOT / "docs"
 
 
 def load_config() -> dict:
@@ -49,8 +50,9 @@ def run(repo: str | None = None, dry_run: bool = False) -> None:
 
     if dry_run:
         summary.lines.append(
-            "**DRY RUN** — data/discoveries.csv, data/seen.json, and the GitHub "
-            "issue below are NOT written. This is what would have happened."
+            "**DRY RUN** — data/discoveries.db, docs/events.json, data/seen.json, "
+            "and the GitHub issue below are NOT written. This is what would have "
+            "happened."
         )
 
     queries = search_cfg["queries"]
@@ -127,10 +129,12 @@ def run(repo: str | None = None, dry_run: bool = False) -> None:
         kept.append(result)
         seen.mark_seen(candidate.url)
 
+    _write_github_output("new_items", str(len(kept)))
+
     if dry_run:
         if kept:
             verified_count = sum(1 for r in kept if r.status != BLOCKED)
-            summary.lines.append(f"- would append {len(kept)} row(s) to data/discoveries.csv")
+            summary.lines.append(f"- would insert {len(kept)} row(s) into data/discoveries.db")
             summary.lines.append(
                 f"- would open digest issue: [weekly-scan] {verified_count} new item(s), "
                 f"{len(kept) - verified_count} unverified"
@@ -138,12 +142,17 @@ def run(repo: str | None = None, dry_run: bool = False) -> None:
         summary.write()
         return
 
-    emit.append_csv(DATA_DIR / "discoveries.csv", kept)
+    conn = db.connect(DATA_DIR / "discoveries.db")
+    try:
+        db.insert_events(conn, kept)
+        feed.write_json_feed(conn, DOCS_DIR / "events.json")
+    finally:
+        conn.close()
 
     if repo and kept:
         try:
             emit.create_digest_issue(kept, repo)
-        except Exception as exc:  # noqa: BLE001 - a failed issue post must not lose the CSV write above
+        except Exception as exc:  # noqa: BLE001 - a failed issue post must not lose the DB write above
             summary.lines.append(f"- digest issue creation failed: {exc}")
 
     seen.save()
@@ -152,6 +161,17 @@ def run(repo: str | None = None, dry_run: bool = False) -> None:
 
 def _env_flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() == "true"
+
+
+def _write_github_output(key: str, value: str) -> None:
+    """SQLite is binary, so the workflow's commit step can't recover an item
+    count from `git diff --numstat` the way it could with the old CSV. Write
+    it here instead, where we already have the real count."""
+    path = os.environ.get("GITHUB_OUTPUT")
+    if not path:
+        return
+    with open(path, "a") as f:
+        f.write(f"{key}={value}\n")
 
 
 def main() -> None:

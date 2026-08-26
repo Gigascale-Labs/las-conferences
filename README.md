@@ -23,13 +23,20 @@ Every Monday 20:00 UTC (and on manual `workflow_dispatch`):
    page that can't be fetched at all (robots.txt, 403, timeout) is kept and
    flagged as unverified rather than dropped, since that says nothing about
    whether the event is real.
-4. Append everything that survives to [`data/discoveries.csv`](data/discoveries.csv)
-   (the cumulative log, with a `verification_status` column) and open one
-   digest GitHub issue for the run — confirmed and unverified-but-possibly-relevant
-   items in separate tables — skipped entirely if nothing new was found.
+4. Insert everything that survives into [`data/discoveries.db`](data/discoveries.db)
+   (SQLite — the cumulative log; each row gets a `uuid4` id and the UTC date
+   it was scraped) and open one digest GitHub issue for the run — confirmed
+   and unverified-but-possibly-relevant items in separate tables — skipped
+   entirely if nothing new was found.
+5. Regenerate [`docs/events.json`](docs/events.json) from the *entire*
+   database (not just this run) — a public JSON feed for
+   largeagentsystems.org or anything else to fetch. See SPEC.md section 7a for
+   the shape and for what wiring the actual site up still needs.
 
-State (`data/seen.json`) is committed back to the repo at the end of each run,
-since GitHub Actions runners are ephemeral.
+State (`data/seen.json`, `data/discoveries.db`, `docs/events.json`) is
+committed back to the repo at the end of each run, since GitHub Actions
+runners are ephemeral. This repo is public (since 2026-08-26) so the feed has
+a stable public URL once GitHub Pages is enabled on it.
 
 ## Setup
 

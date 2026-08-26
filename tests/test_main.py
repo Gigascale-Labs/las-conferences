@@ -1,9 +1,10 @@
+import json
 from unittest.mock import patch
 
 import pytest
 import yaml
 
-from tracker import main
+from tracker import db, main
 from tracker.discover import Candidate, DiscoveryError, QueryResult
 from tracker.verify import BLOCKED, REJECTED, VERIFIED, VerificationResult
 
@@ -26,6 +27,7 @@ def _isolated_paths(tmp_path, monkeypatch):
     config_path.write_text(yaml.safe_dump(SCOPE))
     monkeypatch.setattr(main, "CONFIG_PATH", config_path)
     monkeypatch.setattr(main, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(main, "DOCS_DIR", tmp_path / "docs")
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
 
 
@@ -69,22 +71,32 @@ def test_partial_query_failure_does_not_exit():
             main.run(repo=None, dry_run=True)  # must not raise
 
 
-def test_dry_run_does_not_write_csv_or_seen_state():
+def test_dry_run_does_not_write_db_feed_or_seen_state():
     with patch("tracker.main.discover.run_query", return_value=_query_result([_candidate()])):
         with patch("tracker.main.verify", return_value=VerificationResult(_candidate(), VERIFIED, "ok")):
             main.run(repo=None, dry_run=True)
 
-    assert not (main.DATA_DIR / "discoveries.csv").exists()
+    assert not (main.DATA_DIR / "discoveries.db").exists()
+    assert not (main.DOCS_DIR / "events.json").exists()
     assert not (main.DATA_DIR / "seen.json").exists()
 
 
-def test_real_run_writes_csv_and_seen_state():
+def test_real_run_writes_db_feed_and_seen_state():
     with patch("tracker.main.discover.run_query", return_value=_query_result([_candidate()])):
         with patch("tracker.main.verify", return_value=VerificationResult(_candidate(), VERIFIED, "ok")):
             main.run(repo=None, dry_run=False)
 
-    assert (main.DATA_DIR / "discoveries.csv").exists()
+    assert (main.DATA_DIR / "discoveries.db").exists()
+    assert (main.DOCS_DIR / "events.json").exists()
     assert (main.DATA_DIR / "seen.json").exists()
+
+    conn = db.connect(main.DATA_DIR / "discoveries.db")
+    events = db.fetch_all_events(conn)
+    conn.close()
+    assert len(events) == 1
+    assert events[0]["name"] == "Test Workshop"
+    assert events[0]["id"]  # a uuid was assigned
+    assert events[0]["date_scraped"]
 
 
 def test_real_run_creates_digest_issue_only_when_repo_and_accepted_given():
@@ -98,7 +110,8 @@ def test_real_run_creates_digest_issue_only_when_repo_and_accepted_given():
 
 def test_blocked_candidate_is_kept_not_dropped():
     """A robots.txt/403/timeout block says nothing about whether the event is
-    real, so it must still reach the CSV — just marked as unverified."""
+    real, so it must still reach the DB and feed — just marked as
+    unverified."""
     with patch("tracker.main.discover.run_query", return_value=_query_result([_candidate()])):
         with patch(
             "tracker.main.verify",
@@ -106,14 +119,20 @@ def test_blocked_candidate_is_kept_not_dropped():
         ):
             main.run(repo=None, dry_run=False)
 
-    rows = (main.DATA_DIR / "discoveries.csv").read_text()
-    assert "blocked" in rows
-    assert "Test Workshop" in rows
+    conn = db.connect(main.DATA_DIR / "discoveries.db")
+    events = db.fetch_all_events(conn)
+    conn.close()
+    assert len(events) == 1
+    assert events[0]["verification_status"] == BLOCKED
+    assert events[0]["name"] == "Test Workshop"
+
+    feed_events = json.loads((main.DOCS_DIR / "events.json").read_text())["events"]
+    assert feed_events[0]["verification_status"] == BLOCKED
 
 
 def test_rejected_candidate_is_dropped_entirely():
     """A page that loads but doesn't mention the claimed event is the actual
-    hallucination signal — it must not reach the CSV or the digest issue."""
+    hallucination signal — it must not reach the DB or the digest issue."""
     with patch("tracker.main.discover.run_query", return_value=_query_result([_candidate()])):
         with patch(
             "tracker.main.verify",
@@ -122,5 +141,8 @@ def test_rejected_candidate_is_dropped_entirely():
             with patch("tracker.main.emit.create_digest_issue") as mock_digest:
                 main.run(repo="owner/repo", dry_run=False)
 
-    assert not (main.DATA_DIR / "discoveries.csv").exists()
+    conn = db.connect(main.DATA_DIR / "discoveries.db")
+    events = db.fetch_all_events(conn)
+    conn.close()
+    assert events == []
     mock_digest.assert_not_called()
